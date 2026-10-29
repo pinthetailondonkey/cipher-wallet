@@ -28,6 +28,8 @@ import {
   encodeCfilter,
   encodeGetCfilters,
   encodeGetData,
+  encodeVersion,
+  decodeVersion,
 } from '../src/wire.js';
 
 const VECTORS = JSON.parse(
@@ -133,4 +135,17 @@ test('a start height has one width, and both ends of the wire agree on it', () =
   const fromPeer = new Uint8Array([0x00, 0xff, 0xff, 0xff, 0xff, ...top.slice(5)]);
   assert.equal(decodeGetCfilters(fromPeer).startHeight, 0xffffffff);
   console.log(`[wire] height field: 0..${0xffffffff}, unsigned both ways`);
+});
+
+// A second message writes the same four bytes: a version's start height. It is
+// bounded here for the same reason the filter pair is, not because anything
+// asks it a bad value today — one caller passes the default 0. The bound keeps
+// 2^32 from wrapping to 0, which is the genesis claim again one message over.
+// It is the fourth writer of this field, and the only one that could wrap.
+test('a version start height is bounded at both ends, so it cannot wrap to the genesis claim', () => {
+  assert.throws(() => encodeVersion({ startHeight: 2 ** 32 }), /start height/);
+  assert.throws(() => encodeVersion({ startHeight: -1 }), /start height/);
+  for (const height of [0, 0x7fffffff, 0x80000000, 0xffffffff]) {
+    assert.equal(decodeVersion(encodeVersion({ startHeight: height })).startHeight, height);
+  }
 });

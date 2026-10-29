@@ -265,6 +265,11 @@ export function encodeVersion({
 } = {}) {
   const agent = new TextEncoder().encode(String(userAgent));
   if (agent.length > 255) throw new Error('A user agent is at most 255 bytes.');
+  // The same four bytes a filter asks about, bounded the same way: a raw
+  // setUint32 wraps 2^32 to 0 and -1 to 0xffffffff without a word.
+  if (!Number.isInteger(startHeight) || startHeight < 0 || startHeight > 0xffffffff) {
+    throw new Error('A start height is a whole number from 0 to 4294967295.');
+  }
   const out = new Uint8Array(4 + 8 + 8 + 26 + 26 + 8 + 1 + agent.length + 4 + 1);
   const view = new DataView(out.buffer);
   view.setUint32(0, version, true);
