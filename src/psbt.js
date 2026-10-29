@@ -266,6 +266,14 @@ export function signPsbt(psbt, { privateKey, publicKey, fingerprint, path } = {}
     throw new Error('A coin amount is a bigint of satoshis, not a number.');
   }
 
+  // This build signs SIGHASH_ALL and nothing else. A PSBT that declares SINGLE,
+  // NONE or ANYONECANPAY is refused rather than signed under ALL and relabelled:
+  // the counterparty would have their signature cover outputs they did not
+  // expect, and would not be told. A refusal says so; a silent ALL does not.
+  if ((input.sighashType ?? 1) !== 1) {
+    throw new Error('This build signs SIGHASH_ALL inputs only, and that PSBT asks for another type.');
+  }
+
   const script = input.witnessUtxo.script;
   if (!(script instanceof Uint8Array) || script.length !== 22 || script[0] !== 0x00 || script[1] !== 0x14) {
     throw new Error('This build signs witness v0 pay-to-public-key-hash inputs only.');

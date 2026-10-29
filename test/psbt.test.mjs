@@ -100,6 +100,24 @@ test('signing then finalizing produces a spendable witness', () => {
   assert.equal(secp256k1.verify(signature.slice(0, -1), sighash, pubkey, { prehash: false, format: 'der' }), true);
 });
 
+test('a PSBT asking for a sighash type this build does not honour is refused', () => {
+  // NONE, SINGLE, and their ANYONECANPAY forms. Signing any of them under ALL
+  // and writing 1 back would give the counterparty a signature they did not ask
+  // for, over outputs they may not have expected.
+  for (const sighashType of [0x02, 0x03, 0x82, 0x83]) {
+    const declared = buildPsbt();
+    declared.inputs[0].sighashType = sighashType;
+    const psbt = decodePsbt(encodePsbt(declared));
+    assert.equal(psbt.inputs[0].sighashType, sighashType, 'the declared type must survive the round trip');
+    assert.throws(
+      () => signPsbt(psbt, { privateKey: POCKET.privateKey, publicKey: POCKET.publicKey }),
+      /SIGHASH_ALL/,
+      `sighash type ${sighashType.toString(16)} was signed`,
+    );
+    assert.equal(psbt.inputs[0].partialSigs.length, 0);
+  }
+});
+
 test('finalizing does not change the txid the unsigned transaction had', () => {
   const psbt = buildPsbt();
   const before = txid(psbt.tx);
