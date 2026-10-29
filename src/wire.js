@@ -23,9 +23,10 @@ export const MAGIC = Object.freeze({
 });
 
 export const BASIC_FILTER_TYPE = 0x00;
-const HEADER_SIZE = 24;
+export const FRAME_HEADER_SIZE = 24;
+const HEADER_SIZE = FRAME_HEADER_SIZE;
 const COMMAND_SIZE = 12;
-const MAX_PAYLOAD = 8 * 1024 * 1024;
+export const MAX_PAYLOAD = 8 * 1024 * 1024;
 const MAGIC_BYTES = 'f9beb4d9';
 
 function magicFor(network) {

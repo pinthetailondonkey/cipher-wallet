@@ -16,6 +16,8 @@
 
 import {
   BASIC_FILTER_TYPE,
+  FRAME_HEADER_SIZE,
+  MAX_PAYLOAD,
   PROTOCOL_VERSION,
   decodeCfilter,
   decodeFrame,
@@ -27,7 +29,11 @@ import {
   frame,
 } from './wire.js';
 
-const MAX_BUFFER = 4 * 1024 * 1024;
+// The reader must be able to hold any frame the wire will accept: one payload
+// at the wire's own cap, plus its header. A smaller cap here would refuse a
+// frame that decodeFrame is happy to parse, and the refusal would name the
+// reader rather than the peer.
+const MAX_BUFFER = MAX_PAYLOAD + FRAME_HEADER_SIZE;
 const DEFAULT_TIMEOUT_MS = 8000;
 
 function normalizeHash(blockHash) {

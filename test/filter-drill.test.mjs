@@ -13,7 +13,7 @@ import { frameReader, createPeerClient } from '../src/peerClient.js';
 const VECTORS = JSON.parse(
   readFileSync(new URL('./fixtures/bip158-testnet-19.json', import.meta.url), 'utf8'),
 ).slice(1).map((row) => row.map((field) => (typeof field === 'string' ? field.replace(/ /g, '') : field)));
-import { decodeFrame, decodeGetCfilters, decodeGetData, encodeCfilter, encodeVersion, frame } from '../src/wire.js';
+import { MAX_PAYLOAD, decodeFrame, decodeGetCfilters, decodeGetData, encodeCfilter, encodeVersion, frame } from '../src/wire.js';
 
 // The fabricated-filter drill.
 //
@@ -122,6 +122,24 @@ test('the frame reader refuses a bad checksum and waits on a partial frame', () 
   assert.throws(() => frameReader().push(wrongMagic), /magic/);
 });
 
+test('the reader holds a frame at the wire’s own payload cap, and neither cap is looser than the other', () => {
+  // A cap in the reader below the cap in the wire would refuse a frame the
+  // parser accepts, and blame the peer for it. Both are pinned here against
+  // one payload at the wire's maximum.
+  const payload = new Uint8Array(MAX_PAYLOAD);
+  const whole = frame('block', payload);
+  const reader = frameReader();
+  const half = whole.length >> 1;
+  assert.deepEqual(reader.push(whole.slice(0, half)), [], 'a partial frame still waits at the cap');
+  const frames = reader.push(whole.slice(half));
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].payload.length, MAX_PAYLOAD);
+  assert.equal(reader.pending(), 0);
+  // One byte over: the wire refuses to build it, so nothing downstream has to.
+  assert.throws(() => frame('block', new Uint8Array(MAX_PAYLOAD + 1)), /larger than this wallet reads/);
+  witness('cap', `payload ${MAX_PAYLOAD} bytes held`, `wire refuses ${MAX_PAYLOAD + 1}`);
+});
+
 test('two honest peers agree, and the filter really names our script', async () => {
   const a = await startPeer(honestAnswer(HONEST));
   const b = await startPeer(honestAnswer(HONEST));
@@ -188,6 +206,22 @@ test('a different filter type is refused', async () => {
     witness('wrong filter type', 'refused');
   } finally {
     await a.close();
+  }
+});
+
+test('the client itself refuses an answer about another block, without a pool above it', async () => {
+  // agreedFilter also compares hashes, so a pool-level test cannot tell which
+  // check did the work. Here there is one peer and no pool: the refusal can
+  // only come from fetchFilter's own echo check.
+  const liar = await startPeer(honestAnswer(HONEST, OTHER_BLOCK));
+  try {
+    await assert.rejects(
+      client()({ host: '127.0.0.1', port: liar.port }, BLOCK),
+      /answered about block/,
+    );
+    witness('client-level wrong-block answer', `asked ${BLOCK.slice(0, 8)}`, `told ${OTHER_BLOCK.slice(0, 8)}`, 'refused');
+  } finally {
+    await liar.close();
   }
 });
 
