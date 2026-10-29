@@ -94,7 +94,13 @@ nothing about pockets it was never told about.
   key matches a pocket's, which it cannot produce. Hiding is detectable by
   height going backwards or stalling, and that is a thing the wallet can say.
 - **A peer learns the wallet's IP** unless the connection is over Tor. The
-  existing rule stands: no clearnet peer without an explicit allowance.
+  existing rule stands: no clearnet peer without an explicit allowance. On the
+  Bitcoin rail the default is refusal. On the Monero rail the allowance is
+  written where the address is — a shipped node row that is not an .onion
+  carries `allowClearnet: true` on its own row, and a `CIPHER_XMR_NODE`
+  override is the person's own address and therefore their own allowance
+  (`src/monero/nodes.js`). What is never allowed is a clearnet address whose
+  allowance nobody wrote down.
 - **A peer sees the pattern of requests.** Asking for every block in order is
   the least revealing shape; asking for one block out of twenty is not. This is
   why the scan walks forward rather than jumping.

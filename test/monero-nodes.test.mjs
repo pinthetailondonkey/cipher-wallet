@@ -69,19 +69,25 @@ test('an address that is not a host:port is refused rather than tried', () => {
   assert.equal(OVERRIDE_ENV, 'CIPHER_XMR_NODE');
 });
 
-// ADJUDICATOR's F-A. The Bitcoin rail refuses a clearnet peer by default, and
-// docs/L3-RECEIVE.md states the rule for the whole lane. This door shipped
-// without it: a node at 1.2.3.4 would have been accepted and quietly learned
-// where the wallet is. Same refusal here, same words.
-test('a clearnet node is refused unless clearnet was explicitly allowed', () => {
+// AUDITOR's F-A, framed by ADJUDICATOR. The Bitcoin rail refuses a clearnet
+// peer by default, and docs/L3-RECEIVE.md states the rule for the whole lane.
+// This door shipped without it: a node at 1.2.3.4 would have been accepted and
+// quietly learned where the wallet is. The rule now holds here too, with the
+// allowance written where the address is — on the row, or by the person who
+// typed the override — so a shipped list cannot hand out an allowance nobody
+// chose.
+test('a clearnet node is refused unless the allowance is written down', () => {
   for (const address of ['1.2.3.4:18081', 'node.example:18081', 'localhost:18081', '127.0.0.1:18081']) {
     assert.throws(() => createNodePool({ nodes: [address] }), /without Tor/, address);
-    assert.throws(() => createNodePool({ override: address }), /without Tor/, address);
   }
-  // Said out loud, it is allowed — the allowance is a decision, not a default.
-  const pool = createNodePool({ nodes: ['node.example:18081'], allowClearnet: true });
-  assert.equal(pool.pick(), 'node.example:18081');
-  console.log('[nodes] clearnet refused by default, allowed when named');
+  // On the row: the allowance travels with the address it is about.
+  const row = createNodePool({ nodes: [{ address: 'node.example:18081', allowClearnet: true }] });
+  assert.deepEqual(row.nodes, ['node.example:18081']);
+  // The override is the person's own address, so it is their allowance.
+  assert.equal(createNodePool({ override: 'node.example:18081' }).pick(), 'node.example:18081');
+  // And a blanket, for a build whose transport is known to be Tor.
+  assert.equal(createNodePool({ nodes: ['node.example:18081'], allowClearnet: true }).pick(), 'node.example:18081');
+  console.log('[nodes] clearnet refused by default; allowed only where it is written');
 });
 
 // ADJUDICATOR's F-B: the regex was \d{1,5}, which calls port 0 and 65536 to

@@ -27,13 +27,22 @@
 // that says it has nowhere to go. Fill it here, by hand, with addresses the
 // founder has named; that is the only way it changes.
 //
+// A CLEARNET ROW SAYS SO ON THE ROW. The lane's rule is that no clearnet peer is
+// used without an explicit allowance, so the allowance is written where the
+// address is: a shipped row that is not an .onion is an object carrying
+// `allowClearnet: true`, and a plain string is refused. The override is the
+// person's own allowance — they typed the address — so it needs no marker.
+//
 // What a node learns is written in the README and in docs/L3-RECEIVE.md, not on
 // a screen: the founder's copy law is that user-facing text does not frighten a
 // user with what servers can see. The machinery's limits still have to be true
 // and still have to be written down somewhere a reviewer reads.
 
 export const PUBLIC_NODES = Object.freeze([
-  // e.g. 'node.example.onion:18081' — added by hand, never discovered.
+  // An .onion address, by hand: 'nodexxxxxxxx.onion:18081'.
+  // A clearnet one has to carry its allowance on its own row:
+  //   { address: 'node.example:18081', allowClearnet: true },
+  // Never discovered, never fetched.
 ]);
 
 // The same two shapes the Bitcoin rail accepts, and the same refusal: an
@@ -63,11 +72,20 @@ function clean(address, { allowClearnet } = {}) {
 }
 
 // A pool is the list plus the override, and a sticky choice inside it.
+//
+// `allowClearnet` is the caller's blanket allowance, for a build whose transport
+// is known to be Tor. A row that carries its own `allowClearnet` needs no
+// blanket, which is what keeps one address's allowance from covering the list.
 export function createNodePool({ nodes = PUBLIC_NODES, override = '', allowClearnet = false } = {}) {
-  const chosen = clean(override, { allowClearnet });
+  const chosen = clean(override, { allowClearnet: true });
   const list = chosen
     ? [chosen]
-    : (Array.isArray(nodes) ? nodes : []).map((node) => clean(node, { allowClearnet })).filter(Boolean);
+    : (Array.isArray(nodes) ? nodes : [])
+      .map((node) => {
+        const row = node && typeof node === 'object' ? node : { address: node };
+        return clean(row.address, { allowClearnet: allowClearnet || row.allowClearnet === true });
+      })
+      .filter(Boolean);
   if (list.length === 0) {
     throw new Error('No Monero node is configured on this wallet, so the Monero rail cannot read the chain. Bitcoin is unaffected.');
   }
