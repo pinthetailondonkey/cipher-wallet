@@ -126,14 +126,21 @@ async function openSession(socket, { network, timeoutMs, userAgent }) {
   send('version', encodeVersion({ userAgent }));
   let gotVersion = false;
   let gotVerack = false;
+  let remote = null;
   while (!(gotVersion && gotVerack)) {
     const message = await nextFrame();
     if (message.command === 'version') {
-      const remote = decodeVersion(message.payload);
+      // One handshake, counted once, in order. A second version would let a peer
+      // revise what it claimed after the first claim was checked, and a verack
+      // before any version would let it complete a handshake that was never
+      // offered — skipping the protocol-version check below entirely.
+      if (gotVersion) throw new Error('That peer offered a second version, so the handshake is not one handshake.');
+      remote = decodeVersion(message.payload);
       if (remote.version < 70015) throw new Error('That peer speaks a protocol too old to ask for filters.');
       gotVersion = true;
       send('verack');
     } else if (message.command === 'verack') {
+      if (!gotVersion) throw new Error('That peer acknowledged a handshake it never offered.');
       gotVerack = true;
     } else if (message.command === 'ping') {
       send('pong', message.payload);
@@ -142,7 +149,23 @@ async function openSession(socket, { network, timeoutMs, userAgent }) {
     }
   }
 
-  return { nextFrame, send, close: () => { try { socket.end?.(); } catch { /* already closed */ } } };
+  // After the handshake, another version or verack is the peer opening the
+  // handshake again — the one message it cannot send honestly at this point.
+  // Checked in the read loops below, which is the only place it can arrive: the
+  // handshake loop above exits on the first verack, so a duplicate sent during
+  // the handshake lands here instead.
+  async function nextAnswer() {
+    for (;;) {
+      const message = await nextFrame();
+      if (message.command === 'version' || message.command === 'verack') {
+        throw new Error('That peer re-opened the handshake after it was finished.');
+      }
+      if (message.command === 'ping') { send('pong', message.payload); continue; }
+      return message;
+    }
+  }
+
+  return { nextFrame, nextAnswer, send, remote, close: () => { try { socket.end?.(); } catch { /* already closed */ } } };
 }
 
 export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEFAULT_TIMEOUT_MS, userAgent } = {}) {
@@ -165,8 +188,7 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
     return withSession(peer, async (session) => {
       session.send('getcfilters', encodeGetCfilters({ startHeight: 0, stopHash: asked }));
       for (;;) {
-        const message = await session.nextFrame();
-        if (message.command === 'ping') { session.send('pong', message.payload); continue; }
+        const message = await session.nextAnswer();
         if (message.command !== 'cfilter') continue;
         const answer = decodeCfilter(message.payload);
         if (answer.filterType !== BASIC_FILTER_TYPE) {
@@ -188,8 +210,7 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
     return withSession(peer, async (session) => {
       session.send('getdata', encodeGetData({ hash: asked }));
       for (;;) {
-        const message = await session.nextFrame();
-        if (message.command === 'ping') { session.send('pong', message.payload); continue; }
+        const message = await session.nextAnswer();
         if (message.command !== 'block') continue;
         return { bytes: message.payload };
       }
