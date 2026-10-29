@@ -23,6 +23,7 @@
 // socket lives elsewhere, which is also what makes the policy testable against
 // a fake that can lie.
 
+import { blockOutputScripts, filterMatchesBlock } from './filters.js';
 import { isPublicExplorer } from './watcher.js';
 
 export const MIN_AGREEMENT = 2;
@@ -160,6 +161,40 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {})
     throw new Error(`The peers did not agree on this block's filter, so nothing was believed. Asked: ${who}.`);
   }
   return { filter: first.filter, peers: agreed.map((answer) => answer.peer) };
+}
+
+// The filter a wallet may act on: agreed by two peers AND rebuilt from the
+// block itself. Agreement alone is two peers saying the same thing, and two
+// lying peers say the same thing too; the block is the third witness, and it
+// cannot be forged because its bytes must hash to the block hash that was
+// asked for.
+export async function verifiedFilter(pool, client, blockHash, { prevScripts = [], peers } = {}) {
+  const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { peers });
+  const asked = String(blockHash ?? '').trim().toLowerCase();
+
+  // Ask a peer that agreed. If it will not serve the block, the filter stays
+  // unverified and is refused rather than believed on agreement alone.
+  let bytes = null;
+  let lastError = null;
+  for (const peer of agreed.peers) {
+    try {
+      ({ bytes } = await client.fetchBlock(peer, asked));
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!bytes) {
+    throw new Error(`The filter was not verified against its block: ${lastError?.message || 'no peer served the block'}.`);
+  }
+  const { blockHash: actual } = blockOutputScripts(bytes);
+  if (actual !== asked) {
+    throw new Error(`That peer served block ${actual}, not ${asked}.`);
+  }
+  if (!filterMatchesBlock({ filter: agreed.filter, block: bytes, prevScripts })) {
+    throw new Error('The peers agreed on a filter that its own block does not produce, so nothing was believed.');
+  }
+  return { filter: agreed.filter, peers: agreed.peers, block: bytes };
 }
 
 function sameBytes(a, b) {

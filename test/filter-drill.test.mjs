@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { hex } from '@scure/base';
 import { blockOutputScripts, buildBasicFilter, matchesFilter } from '../src/filters.js';
 import { reverseBytes, sha256d } from '../src/tx.js';
-import { agreedFilter, createPeerPool } from '../src/peers.js';
+import { agreedFilter, createPeerPool, verifiedFilter } from '../src/peers.js';
 import { frameReader, createPeerClient } from '../src/peerClient.js';
 
 // The published BIP-158 testnet-19 vectors, read here as real blocks to serve
@@ -33,8 +33,6 @@ const OUR_SCRIPT = Uint8Array.from([0x00, 0x14, ...new Uint8Array(20).fill(7)]);
 const OTHER_SCRIPT = Uint8Array.from([0x00, 0x14, ...new Uint8Array(20).fill(9)]);
 
 const HONEST = buildBasicFilter({ blockHash: BLOCK, outputScripts: [OUR_SCRIPT] });
-// The same filter for a block that also carries a script we do not know.
-const NEIGHBOUR = buildBasicFilter({ blockHash: BLOCK, outputScripts: [OUR_SCRIPT, OTHER_SCRIPT] });
 
 function witness(name, ...values) {
   console.log(`[drill] ${name}: ${values.map((v) => (v instanceof Uint8Array ? hex.encode(v).slice(0, 48) : String(v))).join(' | ')}`);
@@ -193,26 +191,70 @@ test('a different filter type is refused', async () => {
   }
 });
 
-test('THE DOCUMENTED LIMIT: two peers that agree on a fabricated filter are believed', async () => {
-  // This is not a passing claim about the wallet; it is the limit written down.
-  // Both peers here put OTHER_SCRIPT into a filter for BLOCK, where the block
-  // does not contain it, and because the two answers are identical the wallet
-  // has nothing to tell them apart with. What stops this in reality is a peer
-  // that actually serves the block's transactions, which this wallet does not
-  // fetch yet. When the block-fetch step lands, this test must be tightened from
-  // "believed" to "refused after the block is checked", and it should fail if
-  // the wallet starts believing a filter it never verified.
-  const a = await startPeer(honestAnswer(NEIGHBOUR));
-  const b = await startPeer(honestAnswer(NEIGHBOUR));
+test('THE TIGHTENED LIMIT: two peers agreeing on a fabricated filter are refused once the block is checked', async () => {
+  // This test used to assert the opposite. Before block fetching, two peers
+  // that agreed on a fabricated filter were believed, because agreement was the
+  // only witness the wallet had; the comment said it must be tightened to
+  // "refused after the block is checked" when the block-fetch step landed. It
+  // landed in b6c44e8, so the assertion has flipped. If the wallet ever goes
+  // back to believing agreement alone, this test fails.
+  const [height, blockHash, blockHex, prevScripts, , filterHex] = VECTORS[0];
+  const block = hex.decode(blockHex);
+  const { scripts } = blockOutputScripts(block);
+  // A filter that names a script the block does not carry: both peers serve it,
+  // so byte-for-byte agreement succeeds and only the block can expose the lie.
+  const fabricated = buildBasicFilter({
+    blockHash,
+    outputScripts: [...scripts, OTHER_SCRIPT],
+    prevScripts: prevScripts.map((script) => hex.decode(script)),
+  });
+  assert.notEqual(hex.encode(fabricated), filterHex);
+  assert.equal(matchesFilter(fabricated, blockHash, OTHER_SCRIPT), true);
+
+  const answer = (command) => {
+    if (command === 'getcfilters') return frame('cfilter', encodeCfilter({ blockHash, filter: fabricated }));
+    if (command === 'getdata') return frame('block', block);
+    return [];
+  };
+  const a = await startPeer(answer);
+  const b = await startPeer(answer);
   try {
     const pool = poolFor(a, b);
-    const out = await agreedFilter(pool, client(), BLOCK);
-    const claimed = matchesFilter(out.filter, BLOCK, OTHER_SCRIPT);
-    witness('fabricated agreement', hex.encode(out.filter).slice(0, 48), `claims other script=${claimed}`);
-    // Assert the measured behaviour, not the desired one. If this line starts
-    // failing because the wallet refuses, that is progress and this comment is
-    // the reason it is allowed to change.
-    assert.equal(claimed, true);
+    const client = createPeerClient({ connect, timeoutMs: 2000 });
+    // Layer 1: agreement alone cannot tell them apart. This is the state the
+    // wallet must never act on, and the reason verifiedFilter exists.
+    const agreed = await agreedFilter(pool, client.fetchFilter, blockHash);
+    assert.equal(hex.encode(agreed.filter), hex.encode(fabricated));
+    witness('fabricated agreement', hex.encode(agreed.filter).slice(0, 48), `height ${height}`, 'agreement alone: fooled');
+
+    // Layer 2: the same peers, the same lie, checked against the block.
+    await assert.rejects(
+      verifiedFilter(pool, client, blockHash, { prevScripts: prevScripts.map((script) => hex.decode(script)) }),
+      /does not produce/,
+    );
+    witness('fabricated agreement with the block checked', 'refused');
+  } finally {
+    await a.close(); await b.close();
+  }
+});
+
+test('an honest filter verified against its block is accepted', async () => {
+  const [, blockHash, blockHex, prevScripts, , filterHex] = VECTORS[0];
+  const block = hex.decode(blockHex);
+  const answer = (command) => {
+    if (command === 'getcfilters') return frame('cfilter', encodeCfilter({ blockHash, filter: hex.decode(filterHex) }));
+    if (command === 'getdata') return frame('block', block);
+    return [];
+  };
+  const a = await startPeer(answer);
+  const b = await startPeer(answer);
+  try {
+    const pool = poolFor(a, b);
+    const client = createPeerClient({ connect, timeoutMs: 2000 });
+    const out = await verifiedFilter(pool, client, blockHash, { prevScripts: prevScripts.map((script) => hex.decode(script)) });
+    witness('verified honest filter', hex.encode(out.filter).slice(0, 48));
+    assert.equal(hex.encode(out.filter), filterHex);
+    assert.equal(out.peers.length, 2);
   } finally {
     await a.close(); await b.close();
   }

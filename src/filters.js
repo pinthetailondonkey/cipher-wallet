@@ -300,3 +300,19 @@ export function blockOutputScripts(blockBytes) {
   }
   return { blockHash, scripts };
 }
+
+// Does this filter really describe this block? The peer's filter is rebuilt
+// from the block's own bytes — every output script, plus the scripts spent by
+// non-coinbase inputs — and compared byte for byte. `prevScripts` is the chain
+// context the caller has already scanned; a caller that does not know it cannot
+// verify a filter, and must not pretend to.
+export function filterMatchesBlock({ filter, block, prevScripts = [] } = {}) {
+  if (!(filter instanceof Uint8Array) || filter.length === 0) throw new Error('A filter is bytes.');
+  if (!(block instanceof Uint8Array) || block.length === 0) throw new Error('A block is bytes.');
+  const { blockHash, scripts } = blockOutputScripts(block);
+  const rebuilt = buildBasicFilter({ outputScripts: scripts, prevScripts, blockHash });
+  if (rebuilt.length !== filter.length) return false;
+  let diff = 0;
+  for (let i = 0; i < rebuilt.length; i += 1) diff |= rebuilt[i] ^ filter[i];
+  return diff === 0;
+}
