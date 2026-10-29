@@ -152,11 +152,26 @@ export function encodeCfilter({ blockHash, filter, filterType = BASIC_FILTER_TYP
   return out;
 }
 
+// A count is canonical or it is not a count. CompactSize has exactly one
+// encoding for each value: 0xfd introduces a value of at least 0xfd, 0xfe one of
+// at least 0x10000, 0xff one of at least 0x100000000. Bitcoin Core refuses the
+// padded forms, so a wallet that accepts them is reading a message no peer
+// would have sent, and one sender can spell the same message several ways.
+function readCanonicalVarint(bytes, offset) {
+  const decoded = readVarint(bytes, offset);
+  const first = bytes[offset];
+  const least = first === 0xfd ? 0xfd : first === 0xfe ? 0x10000 : first === 0xff ? 0x100000000 : 0;
+  if (decoded.value < least) {
+    throw new Error('That message writes its count in a padded form, which is not a CompactSize.');
+  }
+  return decoded;
+}
+
 export function decodeCfilter(payload) {
   if (!(payload instanceof Uint8Array) || payload.length < 34) {
     throw new Error('A cfilter message is at least 34 bytes.');
   }
-  const size = readVarint(payload, 33);
+  const size = readCanonicalVarint(payload, 33);
   const at = size.offset;
   if (payload.length - at !== Number(size.value)) {
     throw new Error('That cfilter’s length does not match the bytes it carries.');
@@ -281,7 +296,7 @@ export function encodeGetData({ type = MSG_WITNESS_BLOCK, hash } = {}) {
 }
 
 export function decodeGetData(payload) {
-  const count = readVarint(payload, 0);
+  const count = readCanonicalVarint(payload, 0);
   if (count.value !== 1) throw new Error('This wallet asks for one block at a time.');
   if (payload.length - count.offset !== 36) throw new Error('A getdata message is one type and one hash.');
   const type = payload[count.offset] | (payload[count.offset + 1] << 8)

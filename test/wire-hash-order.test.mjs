@@ -81,6 +81,26 @@ test('cfilter carries the block hash in internal order and decodes back', () => 
   witness('cfilter', `carried ${hex.encode(message.slice(1, 9))}`, `decoded ${decoded.blockHash.slice(0, 16)}`);
 });
 
+test('a count written in a padded form is refused, because no peer would send one', () => {
+  // The same three-byte filter, spelled two ways. 0x03 is the canonical
+  // CompactSize; 0xfd 0x03 0x00 says the same number in a form Bitcoin Core
+  // refuses. If this wallet accepts both, one sender decides how many encodings
+  // of a message exist.
+  const filter = Uint8Array.of(0x01, 0x02, 0x03);
+  const canonical = encodeCfilter({ blockHash: PARENT_DISPLAY, filter });
+  assert.equal(canonical[33], 3);
+  assert.equal(decodeCfilter(canonical).filter.length, 3);
+
+  const padded = new Uint8Array([...canonical.slice(0, 33), 0xfd, 0x03, 0x00, ...filter]);
+  assert.throws(() => decodeCfilter(padded), /padded form/);
+
+  // getdata's transaction count is the same kind of count, read the same way.
+  const getdata = encodeGetData({ hash: PARENT_DISPLAY });
+  assert.equal(getdata[0], 1);
+  assert.throws(() => decodeGetData(new Uint8Array([0xfd, 0x01, 0x00, ...getdata.slice(1)])), /padded form/);
+  witness('padded counts', 'cfilter refused', 'getdata refused');
+});
+
 test('a hash written in the wrong order does not survive a round trip', () => {
   // The mutation this pin exists for: if the conversion is removed from both
   // sides symmetrically, a round trip still passes — so the assertion above on
