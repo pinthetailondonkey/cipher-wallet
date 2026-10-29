@@ -77,7 +77,7 @@ export async function walkBack({ fetchBlock, peer, tipHash, stopHash = null, max
     // nothing about the body: a real header travels with whatever body the peer
     // attaches. Checked here so a walk never carries a body its header does not
     // commit to.
-    verifyBlockBody(bytes);
+    const body = verifyBlockBody(bytes);
     if (previous && !blockConnects(bytes, previous)) {
       // The block we already accepted says its parent is X; this block hashes
       // to X but is not the parent on that same header check only if the bytes
@@ -86,7 +86,7 @@ export async function walkBack({ fetchBlock, peer, tipHash, stopHash = null, max
       throw new Error(`Block ${actual} does not connect to ${blockHash(previous)}.`);
     }
     blocks.push({ hash: actual, bytes });
-    onBlock?.({ hash: actual, bytes });
+    await onBlock?.({ hash: actual, bytes, body });
     if (stop && actual === stop) return blocks;
     const parent = previousBlockHash(bytes);
     if (parent === '0'.repeat(64)) return blocks;
