@@ -141,9 +141,15 @@ served over a socket by two agreeing peers.
 
 What this still does not do: it verifies a body against its header, not the
 chain's proof of work. A header's own work is not checked here, so a peer that
-mines a private header (or is handed one) can build a self-consistent block. The
-chain walk in `src/chain.js` links blocks and refuses a body its header does not
-commit to; deciding which chain is the real one is not in this build.
+mines a private header (or is handed one) can build a self-consistent block, and
+a short private chain of such blocks links and hashes cleanly.
+
+Where that bites is specific, and worth naming rather than hedging: a filter
+lookup asks about a block hash the wallet already has, and the header must hash
+to exactly that, so a lie on that path needs a second preimage of the asked hash.
+The walk is the open door, because its tip hash is peer-supplied: a peer can hand
+over a tip of its own making, and every link after it will check out. Deciding
+which chain is the real one is not in this build.
 
 ### What has gone wrong here
 
