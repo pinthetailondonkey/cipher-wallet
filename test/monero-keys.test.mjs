@@ -28,16 +28,19 @@ const unhex = (text) => Uint8Array.from(Buffer.from(text, 'hex'));
 // The fixture is Monero's own tests/crypto/tests.txt, cut to a bounded subset.
 // Every 64-character hex field has one space after character 32 so it is not a
 // bare 32-byte hex run (see test/fixtures/README.md). The field layout per
-// command is fixed, so joining is done by arity rather than by guessing.
+// command is fixed, so joining is done by arity rather than by guessing. A
+// command may have two layouts: the ordinary vector, and the refusal vector
+// Monero ends a section with, which has no expected output and one fewer field.
 const SHAPE = {
-  secret_key_to_public_key: [2, 1, 2],
+  secret_key_to_public_key: [[2, 1, 2], [2, 1]],
   // The data being hashed may itself be 32 bytes, so its width is not fixed.
-  hash_to_scalar: ['*', 2],
-  biased_hash_to_ec: [2, 2],
-  generate_key_derivation: [2, 2, 1, 2],
-  generate_key_image: [2, 2, 2],
-  derive_public_key: [2, 1, 2, 1, 2],
-  derive_view_tag: [2, 1, 1],
+  hash_to_scalar: [['*', 2]],
+  biased_hash_to_ec: [[2, 2]],
+  generate_key_derivation: [[2, 2, 1, 2], [2, 2, 1]],
+  generate_key_image: [[2, 2, 2]],
+  derive_public_key: [[2, 1, 2, 1, 2], [2, 1, 2, 1]],
+  derive_view_tag: [[2, 1, 1]],
+  derive_secret_key: [[2, 1, 2, 2]],
 };
 
 function readVectors() {
@@ -47,11 +50,14 @@ function readVectors() {
     const tokens = line.trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) continue;
     const [command, ...rest] = tokens;
-    const shape = SHAPE[command];
-    assert.ok(shape, `unknown vector command in the fixture: ${command}`);
-    const fixed = shape.filter((w) => w !== '*').reduce((a, b) => a + b, 0);
-    if (shape.includes('*')) assert.ok(rest.length > fixed, `unexpected field count for ${command}`);
-    else assert.equal(rest.length, fixed, `unexpected field count for ${command}`);
+    const alternatives = SHAPE[command];
+    assert.ok(alternatives, `unknown vector command in the fixture: ${command}`);
+    const fixedOf = (alt) => alt.filter((w) => w !== '*').reduce((a, b) => a + b, 0);
+    const shape = alternatives.find((alt) => (alt.includes('*')
+      ? rest.length > fixedOf(alt)
+      : rest.length === fixedOf(alt)));
+    assert.ok(shape, `unexpected field count for ${command}: ${rest.length}`);
+    const fixed = fixedOf(shape);
     const fields = [];
     let at = 0;
     for (const width of shape) {
@@ -66,10 +72,17 @@ function readVectors() {
 
 const VECTORS = readVectors();
 
+// A refusal vector carries `false` where an expected output would be. Monero
+// puts them at the end of a section, which is exactly where a "keep the first N
+// lines" cut loses them — it did, the first time this fixture was cut.
+const rowsOf = (command) => VECTORS.filter((v) => v.command === command);
+const positivesOf = (command) => rowsOf(command).filter((v) => v.fields.at(-1) !== 'false');
+const refusalsOf = (command) => rowsOf(command).filter((v) => v.fields.at(-1) === 'false');
+
 test('the fixture carries every section it is supposed to', () => {
   const kinds = new Set(VECTORS.map((v) => v.command));
   for (const command of Object.keys(SHAPE)) assert.ok(kinds.has(command), `missing ${command}`);
-  assert.ok(VECTORS.length >= 200, 'the fixture was cut too short to be worth keeping');
+  assert.ok(VECTORS.length >= 500, 'the fixture was cut too short to be worth keeping');
 });
 
 test('l * G is the identity, so the group order constant is right', () => {
@@ -93,7 +106,7 @@ test('the field constants are the numbers their own comments describe', () => {
 });
 
 test('secret_key_to_public_key matches Monero for every vector', () => {
-  const rows = VECTORS.filter((v) => v.command === 'secret_key_to_public_key');
+  const rows = positivesOf('secret_key_to_public_key');
   assert.ok(rows.length > 0);
   for (const { fields } of rows) {
     const [secret, , expected] = fields;
@@ -120,7 +133,7 @@ test('hash to point matches Monero for every vector', () => {
 });
 
 test('key derivation matches Monero for every vector', () => {
-  const rows = VECTORS.filter((v) => v.command === 'generate_key_derivation');
+  const rows = positivesOf('generate_key_derivation');
   assert.ok(rows.length > 0);
   for (const { fields } of rows) {
     const [publicKey, secret, ok, expected] = fields;
@@ -139,7 +152,7 @@ test('key images match Monero for every vector', () => {
 });
 
 test('derived one-time keys match Monero for every vector', () => {
-  const rows = VECTORS.filter((v) => v.command === 'derive_public_key');
+  const rows = positivesOf('derive_public_key');
   assert.ok(rows.length > 0);
   for (const { fields } of rows) {
     const [derivation, index, base, ok, expected] = fields;
@@ -157,6 +170,37 @@ test('view tags match Monero for every vector', () => {
   }
 });
 
+test('derived one-time secrets match Monero for every vector', () => {
+  const rows = rowsOf('derive_secret_key');
+  // Monero emits 256 of these and they are the only in-repo pin for
+  // deriveSecretKey. A shorter file means the fixture was cut again.
+  assert.equal(rows.length, 256, 'the derive_secret_key vectors went missing');
+  for (const { fields } of rows) {
+    const [derivation, index, secret, expected] = fields;
+    assert.equal(hex(deriveSecretKey(unhex(derivation), Number(index), unhex(secret))), expected);
+  }
+});
+
+test('every vector Monero refuses, this wallet refuses too', () => {
+  const cases = {
+    secret_key_to_public_key: (f) => secretToPublic(unhex(f[0])),
+    generate_key_derivation: (f) => keyDerivation(unhex(f[0]), unhex(f[1])),
+    derive_public_key: (f) => derivePublicKey(unhex(f[0]), Number(f[1]), unhex(f[2])),
+  };
+  for (const [command, run] of Object.entries(cases)) {
+    const rows = refusalsOf(command);
+    // 16 per section in Monero's file. Asserting the count is the point: a cut
+    // that drops them again would otherwise pass on an empty list.
+    assert.equal(rows.length, 16, `${command} lost its refusal vectors`);
+    for (const { fields } of rows) {
+      assert.throws(() => run(fields), Error, `${command} accepted a vector Monero refuses`);
+    }
+  }
+});
+
+// This one is structural: it holds for any shared hash, so it would still pass
+// if both functions used the same wrong one. It is kept as a shape check. The
+// real pin for deriveSecretKey is Monero's 256 vectors above.
 test('a derived one-time secret and its public key are a pair', () => {
   const derivation = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff);
   const secret = scReduce32(Uint8Array.from({ length: 32 }, (_, i) => (i * 11 + 5) & 0xff));

@@ -35,10 +35,10 @@ character 32 for the reason above):
 
 This fixture's own sha256:
 
-    6d706ee09d12cbad30c00d681d349068 3173497aa037d0007957af01259f8a2f
+    e2b348e11b8c6b710c2f8a48682a371a 45cf0d5755fe923546a73909cfee8ffb
 
 **Two transformations, both visible.** Lines are grouped by command in this
-order and cut to these counts:
+order, and each section keeps every positive vector up to this count:
 
     secret_key_to_public_key  32
     hash_to_scalar            32
@@ -47,8 +47,27 @@ order and cut to these counts:
     generate_key_image        32
     derive_public_key         32
     derive_view_tag           16
+    derive_secret_key         all 256
 
-and every 64-character hex field has one space after character 32, as above.
+Every refusal vector in a section is kept as well — Monero ends a section with
+lines whose expected result is `false`, and there are 16 each in
+`secret_key_to_public_key`, `generate_key_derivation` and `derive_public_key`,
+48 in all. They come after the positive vectors, so the counts above are of the
+positive lines and the file is 544 lines.
+
+The first cut of this file said "the first N lines of each section" and that
+silently dropped all 48, because they are at the ends. The negative controls are
+the half that proves a value is refused rather than accidentally accepted, so a
+cut that loses them is a cut that should fail loudly: the test asserts 16 per
+section and 256 `derive_secret_key` lines, not just a total.
+
+`derive_secret_key` is kept whole because it was missing entirely and is the
+only in-repo pin for `deriveSecretKey`; the pairing test next to it is
+structural and would pass with a shared wrong hash. The full source file is
+8.4 MB and most of it is ring signatures this wallet does not implement yet, so
+the rest stays cut.
+
+Every 64-character hex field has one space after character 32, as above.
 `test/monero-keys.test.mjs` rejoins the fields by the fixed arity of each
 command and strips nothing else.
 
