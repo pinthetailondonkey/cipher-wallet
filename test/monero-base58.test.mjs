@@ -58,7 +58,7 @@ test('the alphabet is Monero’s 58 characters, without 0, O, I or l', () => {
 
 test('blocks encode exactly as Monero encodes them', () => {
   const rows = rowsOf('encode_block');
-  assert.ok(rows.length >= 29, 'the block vectors were cut');
+  assert.equal(rows.length, 29, `the block vectors were cut or added to: ${rows.length}`);
   for (const { data, address } of rows) {
     assert.equal(encode(data), address, `block ${hex(data)}`);
   }
@@ -66,7 +66,7 @@ test('blocks encode exactly as Monero encodes them', () => {
 
 test('whole strings encode exactly as Monero encodes them', () => {
   const rows = rowsOf('encode');
-  assert.ok(rows.length >= 17, 'the string vectors were cut');
+  assert.equal(rows.length, 17, `the string vectors were cut or added to: ${rows.length}`);
   for (const { data, address } of rows) {
     assert.equal(encode(data), address, `data ${hex(data)}`);
   }
@@ -74,7 +74,7 @@ test('whole strings encode exactly as Monero encodes them', () => {
 
 test('decoding matches Monero, including the empty string', () => {
   const rows = rowsOf('decode_pos');
-  assert.ok(rows.length >= 33, 'the decode vectors were cut');
+  assert.equal(rows.length, 33, `the decode vectors were cut or added to: ${rows.length}`);
   for (const { data, address } of rows) {
     assert.equal(hex(decode(address)), hex(data), `string ${address || '(empty)'}`);
   }
@@ -85,7 +85,7 @@ test('decoding refuses everything Monero refuses', () => {
   // Invalid lengths, overflow, and characters outside the alphabet. Asserting
   // the count matters: a cut that drops them would otherwise pass on nothing.
   // 56 whole-string refusals plus 29 block-level ones in Monero's file.
-  assert.ok(rows.length >= 85, `the refusal vectors were cut: ${rows.length}`);
+  assert.equal(rows.length, 85, `the refusal vectors were cut or added to: ${rows.length}`);
   for (const { address } of rows) {
     assert.throws(() => decode(address), Error, `accepted ${address}`);
   }
@@ -93,7 +93,7 @@ test('decoding refuses everything Monero refuses', () => {
 
 test('an address prefix and payload round-trip through the checksum', () => {
   const rows = rowsOf('addr');
-  assert.ok(rows.length >= 21, 'the address vectors were cut');
+  assert.equal(rows.length, 21, `the address vectors were cut or added to: ${rows.length}`);
   for (const { tag, data, address } of rows) {
     const decoded = decodeAddr(address);
     assert.equal(decoded.tag, tag, `tag of ${address}`);
@@ -104,7 +104,7 @@ test('an address prefix and payload round-trip through the checksum', () => {
 
 test('an address Monero refuses is refused here too', () => {
   const rows = rowsOf('addr_neg');
-  assert.ok(rows.length >= 15, `the address refusal vectors were cut: ${rows.length}`);
+  assert.equal(rows.length, 16, `the address refusal vectors were cut or added to: ${rows.length}`);
   for (const { address } of rows) {
     assert.throws(() => decodeAddr(address), Error, `accepted ${address}`);
   }
