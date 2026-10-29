@@ -127,6 +127,18 @@ function scalarBytes(value, name) {
   return bytesToNumberLE(value);
 }
 
+// A secret key is reduced mod l and is not zero. Zero is a perfectly good
+// scalar and passes the canonicality check, but every operation below returns
+// the identity point for it, and that identity encodes as 0x01 followed by
+// thirty-one zero bytes — the "zero key image" class Monero's sc_check exists
+// to refuse. Keeping the check in one place means it holds at every door, not
+// only at the one that builds a public key.
+function keyScalar(value, name) {
+  const k = scalarBytes(value, name);
+  if (k === 0n) throw new Error('A secret key of zero is not a key.');
+  return k;
+}
+
 // Point encoding is ed25519's own: 32 bytes, y little-endian, sign of x on top.
 export function encodePoint(point) {
   if (!point || typeof point.toBytes !== 'function') throw new Error('That is not a curve point.');
@@ -147,9 +159,7 @@ export function decodePoint(bytes) {
 // ge_scalarmult_base. A zero secret is refused: Monero's own sc_check rejects
 // it, and a zero key would produce the identity, which is not a key.
 export function secretToPublic(secret) {
-  const k = scalarBytes(secret, 'A secret key');
-  if (k === 0n) throw new Error('A secret key of zero is not a key.');
-  return encodePoint(Point.BASE.multiplyUnsafe(k));
+  return encodePoint(Point.BASE.multiplyUnsafe(keyScalar(secret, 'A secret key')));
 }
 
 // The view secret, exactly as account_base::generate makes it: keccak of the
@@ -299,7 +309,7 @@ export function hashToPoint(publicKey) {
 // I = x * Hp(P). x must be the secret that owns P; the function cannot check
 // that, so callers pass the pair they derived together.
 export function keyImage(publicKey, secret) {
-  const k = scalarBytes(secret, 'A secret key');
+  const k = keyScalar(secret, 'A secret key');
   const hp = decodePoint(hashToPoint(publicKey));
   return encodePoint(hp.multiplyUnsafe(k));
 }
@@ -332,7 +342,7 @@ function concat(arrays) {
 // own way. The times-8 is Monero's cofactor clearing; leaving it out gives a
 // derivation that is stable and wrong, which is why the vectors exist.
 export function keyDerivation(publicKey, secret) {
-  const k = scalarBytes(secret, 'A secret key');
+  const k = keyScalar(secret, 'A secret key');
   return encodePoint(decodePoint(publicKey).multiplyUnsafe(k).clearCofactor());
 }
 
@@ -361,7 +371,7 @@ export function derivePublicKey(derivation, index, basePublicKey) {
 
 // The matching one-time secret: base secret plus the same hash as a scalar.
 export function deriveSecretKey(derivation, index, baseSecret) {
-  const b = scalarBytes(baseSecret, 'A secret key');
+  const b = keyScalar(baseSecret, 'A secret key');
   const hs = bytesToNumberLE(hashToScalar(concat([derivation, varint(index)])));
   return numberToBytesLE((b + hs) % GROUP_ORDER);
 }

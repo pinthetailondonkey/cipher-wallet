@@ -226,8 +226,16 @@ test('a scalar that is not reduced is refused rather than silently used', () => 
   assert.throws(() => secretToPublic(tooBig), /not reduced mod l/);
 });
 
-test('a zero secret is refused', () => {
-  assert.throws(() => secretToPublic(new Uint8Array(32)), /zero is not a key/);
+test('a zero secret is refused at every door, not only where a public key is built', () => {
+  const zero = new Uint8Array(32);
+  const publicKey = secretToPublic(scReduce32(Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff)));
+  const derivation = unhex('11'.repeat(32));
+  assert.throws(() => secretToPublic(zero), /zero is not a key/);
+  // Without the guard these return the identity point, encoded as 0x01 then
+  // zeros: a zero key image, which no other Monero node would accept.
+  assert.throws(() => keyImage(publicKey, zero), /zero is not a key/);
+  assert.throws(() => keyDerivation(publicKey, zero), /zero is not a key/);
+  assert.throws(() => deriveSecretKey(derivation, 0, zero), /zero is not a key/);
 });
 
 test('a secret of the wrong length is refused', () => {
