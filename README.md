@@ -123,6 +123,17 @@ cannot hide a payment or invent one. When they disagree nothing is believed.
 That agreement anchors on the first peer that answers and is checked against one
 more: a compromised peer can force a refusal, and cannot force a false answer.
 
+**Two peers that lie together are not yet covered.** Agreement is two strangers
+saying the same thing, and two strangers can agree on a lie. The filter is also
+checked against the block those peers serve — but as of these bytes only the
+block's 80-byte header is hashed. Nothing checks the transactions inside the
+body against the merkle root the header carries, so a peer can keep a real,
+public header, attach a body of its own choosing, and pass both checks. Two
+colluding peers can therefore still make this wallet believe a payment that is
+not in the chain. This is a known open limit, stated here rather than left for a
+reader to assume otherwise; it is closed when the body's transaction ids are
+checked against the header's merkle root.
+
 ### What has gone wrong here
 
 Kept in the open because a reader will otherwise assume the code and its tests
