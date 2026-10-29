@@ -110,6 +110,29 @@ request, which is why it is refused.
 
 Filter data is accepted only when two independent peers agree, so one lying peer
 cannot hide a payment or invent one. When they disagree nothing is believed.
+That agreement anchors on the first peer that answers and is checked against one
+more: a compromised peer can force a refusal, and cannot force a false answer.
+
+### What has gone wrong here
+
+Kept in the open because a reader will otherwise assume the code and its tests
+were right the first time.
+
+- **Change could be sent to the payee.** The surplus was added to the payee's
+  output, so a spend overpaid and the fresh-pocket promise was silently broken.
+  The guard that now refuses this is one line. The larger fault was that four
+  existing tests were quietly asserting the wrong shape, because their shared
+  helper defaulted change to the payee. The guard was missing and the net under
+  it was mesh.
+- **A transaction was serialized with the locktime before the witness**, and a
+  P2PKH script builder dropped a byte. Both were caught on the first run by
+  published test vectors, not by review.
+- **Monero's hash-to-point map was wrong for half of all inputs**, while
+  producing correct points for the other half. Published vectors caught it.
+
+That last one is the whole argument for pinned vectors, so it is worth saying
+plainly: a map that is wrong half the time looks exactly like a map that is
+right, and only a vector knows the difference. Vectors are not ceremony here.
 
 ## Gates
 
@@ -118,4 +141,5 @@ cannot hide a payment or invent one. When they disagree nothing is believed.
     npm test
 
 Test vectors are vendored under `test/fixtures`; see the README there for
-provenance and the one visible transformation applied to them.
+provenance, the pinned upstream commits, both checksums, and the visible
+transformation applied to each file.
