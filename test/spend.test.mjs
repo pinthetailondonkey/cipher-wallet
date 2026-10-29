@@ -22,7 +22,10 @@ function utxoOf(value) {
   return { txid: PREV, vout: 0, value };
 }
 
-function spendOf({ value = 100000n, amount = 50000n, fee = 1000n, changeAddress = PAY_TO } = {}) {
+// The default change address is a second address, not the payee. It used to be
+// the payee, which meant four tests were quietly asserting the shape the guard
+// above now refuses.
+function spendOf({ value = 100000n, amount = 50000n, fee = 1000n, changeAddress = CHANGE_TO } = {}) {
   return buildSpend({ pocket: POCKET, utxo: utxoOf(value), to: PAY_TO, amount, fee, changeAddress });
 }
 
@@ -59,6 +62,24 @@ test('change exactly at the dust limit is still an output', () => {
   const out = buildSpend({ pocket: POCKET, utxo: utxoOf(value), to: PAY_TO, amount: 50000n, fee: 1000n, changeAddress: CHANGE_TO });
   assert.equal(out.tx.outputs.length, 2);
   assert.equal(out.change, DUST_LIMIT);
+});
+
+test('change sent to the payee is refused, not folded into an overpayment', () => {
+  assert.throws(
+    () => buildSpend({
+      pocket: POCKET, utxo: utxoOf(100000n), to: PAY_TO, amount: 50000n, fee: 1000n, changeAddress: PAY_TO,
+    }),
+    /change address is the payee/,
+  );
+});
+
+test('a normal spend to a separate change pocket is unaffected by that guard', () => {
+  const { tx, change } = buildSpend({
+    pocket: POCKET, utxo: utxoOf(100000n), to: PAY_TO, amount: 50000n, fee: 1000n, changeAddress: CHANGE_TO,
+  });
+  assert.equal(tx.outputs.length, 2);
+  assert.equal(change, 49000n);
+  assert.notEqual(hex.encode(tx.outputs[1].script), hex.encode(tx.outputs[0].script));
 });
 
 test('a spend with change and nowhere to put it is refused', () => {

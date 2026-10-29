@@ -70,7 +70,15 @@ export function buildSpend({
     change = 0n;
   } else if (change > 0n) {
     if (!changeAddress) throw new Error('This spend has change, so it needs somewhere for the change to go.');
-    outputs.push({ value: change, script: decodeAddress(changeAddress, network).script });
+    const changeScript = decodeAddress(changeAddress, network).script;
+    // Change to the payee is not change, it is an overpayment: the surplus goes
+    // to the person being paid and the fresh-pocket promise is silently broken.
+    // The same address written two ways is still the same address.
+    if (changeScript.length === payee.script.length
+      && changeScript.every((byte, i) => byte === payee.script[i])) {
+      throw new Error('The change address is the payee. Change must return to a pocket of ours.');
+    }
+    outputs.push({ value: change, script: changeScript });
   }
 
   const tx = {
