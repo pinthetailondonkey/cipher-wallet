@@ -61,8 +61,11 @@ once. Detection is per pocket, on the device:
    and an output's key is never equal to it. This is Monero's own
    output-scanning rule; the output is ours when the comparison matches.
    Implemented the other way round the scan matches nothing, and every payment
-   reads as never received — the silent-zero class the pinned-address test
-   exists to catch.
+   reads as never received — the silent-zero class. The pinned-address test
+   fences a changed derivation only: it compares three address strings and never
+   touches scan code, and a wrong scan rule leaves every address unchanged. What
+   fences the scan rule is its own tests, each pair carrying an output that must
+   match beside a neighbour that must not.
 3. A matched output is a **seen** payment. As with Bitcoin, a peer having the
    bytes is not the money; the confirmation count comes from the chain height
    the same peer reports, and the states stay separate: seen, then confirmed.
