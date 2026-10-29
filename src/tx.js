@@ -222,9 +222,9 @@ function readU64(bytes, offset) {
 // The inverse of serializeTx, for a transaction that arrived as bytes (a PSBT
 // carries one). Parses what bitcoin actually puts on the wire; refuses
 // truncation rather than returning a half transaction.
-export function parseTx(bytes) {
+export function parseTx(bytes, { offset = 0, exact = true } = {}) {
   if (!(bytes instanceof Uint8Array)) throw new Error('A transaction is bytes.');
-  let at = 0;
+  let at = offset;
   const need = (n) => {
     if (at + n > bytes.length) throw new Error('The transaction ended before it was complete.');
   };
@@ -285,9 +285,9 @@ export function parseTx(bytes) {
   need(4);
   const lockTime = readU32(bytes, at);
   at += 4;
-  if (at !== bytes.length) throw new Error('The transaction has trailing bytes.');
+  if (exact && at !== bytes.length) throw new Error('The transaction has trailing bytes.');
 
-  return { version, inputs, outputs, lockTime };
+  return { version, inputs, outputs, lockTime, size: at - offset };
 }
 
 // BIP-143, witness v0. The scriptCode of a P2WPKH input is the P2PKH script

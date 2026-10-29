@@ -226,7 +226,7 @@ export function decodePsbt(bytes) {
     for (const entry of map.entries) {
       if (!KNOWN_OUTPUT.has(entry.key[0])) continue;
       if (entry.key[0] === OUT_BIP32_DERIVATION) {
-        output.bip32Derivation.push({ pubkey: entry.key.slice(1), fingerprint: [...entry.value.slice(0, 4)], path: [] });
+        output.bip32Derivation.push({ pubkey: entry.key.slice(1), fingerprint: entry.value.slice(0, 4), path: [] });
       }
     }
     outputs.push(output);

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { derivePocket, pocketFor, rootFromMnemonic } from '../src/root.js';
-import { p2wpkhScriptCode, p2wpkhScriptFor, parseTx, p2wpkhScript, serializeTx, txid, witnessV0Sighash } from '../src/tx.js';
+import { derivePocket, rootFromMnemonic } from '../src/root.js';
+import { p2wpkhScriptCode, p2wpkhScriptFor, parseTx, serializeTx, txid, witnessV0Sighash } from '../src/tx.js';
 import { decodeAddress } from '../src/address.js';
 import {
   decodePsbt,
