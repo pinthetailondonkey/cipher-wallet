@@ -1,4 +1,5 @@
-// A Monero pocket: one address, one spend key, one view key, one payment.
+// A Monero pocket: one address, one spend key, one view key. It can receive any
+// number of payments to that address; "one payment" is not a rule here.
 //
 // L3 — see docs/L3-RECEIVE.md. Each pocket is its own whole wallet, not a
 // subaddress of a shared account. A subaddress shares the account's view key,

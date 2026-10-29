@@ -16,8 +16,10 @@ Everything below follows from those three.
 
 ## What a pocket is
 
-A pocket is one address, one spend key, one view key, one payment. It is not a
-subaddress of a shared account: a subaddress shares the account's view key,
+A pocket is one address, one spend key, one view key. It can receive any number
+of payments to that address; "one payment" is not a rule anywhere in this
+design. It is not a subaddress of a shared account: a subaddress shares the
+account's view key,
 which is exactly the link L3 exists to remove. A subaddress would let one key
 see every pocket, and no amount of UI wording changes what the chain shows.
 
@@ -96,6 +98,9 @@ nothing about pockets it was never told about.
 
 ## What this does not yet cover
 
+- **Detection itself.** This section is a design, not a built thing: nothing in
+  `src/` calls `moneroPocket` except its test, so no block has been fetched and
+  no output scanned. It is listed first because everything below depends on it.
 - **Amounts.** A matched output proves an output is ours, not how much it
   carries. RingCT amounts have to be decrypted with the same derivation before a
   payment can be shown as an amount, and that is the next piece of work.
