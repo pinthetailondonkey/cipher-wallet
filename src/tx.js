@@ -59,6 +59,21 @@ export function varint(value) {
   throw new Error('That count is too large for this build.');
 }
 
+export function readVarint(bytes, offset = 0) {
+  if (!(bytes instanceof Uint8Array)) throw new Error('Reading a count needs bytes.');
+  const first = bytes[offset];
+  if (first === undefined) throw new Error('The data ended before its count.');
+  if (first < 0xfd) return { value: first, offset: offset + 1 };
+  const width = first === 0xfd ? 2 : first === 0xfe ? 4 : 8;
+  if (offset + 1 + width > bytes.length) throw new Error('The data ended inside its count.');
+  let value = 0;
+  for (let i = 0; i < width; i += 1) {
+    value += bytes[offset + 1 + i] * 2 ** (8 * i);
+  }
+  if (!Number.isSafeInteger(value)) throw new Error('That count is too large for this build.');
+  return { value, offset: offset + 1 + width };
+}
+
 function u32le(value) {
   const n = Number(value);
   if (!Number.isSafeInteger(n) || n < 0 || n > 0xffffffff) throw new Error('A 32-bit field is out of range.');
@@ -147,6 +162,12 @@ function serializeOutputs(outputs) {
   return concat([varint(outputs.length), serializeOutputsBody(outputs)]);
 }
 
+// One output, as a PSBT carries it under PSBT_IN_WITNESS_UTXO.
+export function serializeTxOut(output) {
+  if (!output || !(output.script instanceof Uint8Array)) throw new Error('An output needs a script.');
+  return concat([u64le(output.value), withLength(output.script)]);
+}
+
 function serializeWitness(inputs) {
   const parts = [];
   for (const input of inputs) {
@@ -167,13 +188,17 @@ function hasWitness(inputs) {
 // Serialize for the network. Without witnesses this is the legacy encoding;
 // with them, the marker/flag form. `forId` strips the witness, which is what
 // makes a txid stable across witness changes.
+// Byte order matters: the witness stacks sit between the outputs and the
+// locktime, not after it. Putting locktime first produces a transaction that
+// looks right and is rejected by every node.
 export function serializeTx(tx, { witness = true } = {}) {
   checkTx(tx);
-  const body = concat([serializeInputs(tx.inputs), serializeOutputs(tx.outputs), u32le(tx.lockTime ?? 0)]);
+  const body = concat([serializeInputs(tx.inputs), serializeOutputs(tx.outputs)]);
+  const lockTime = u32le(tx.lockTime ?? 0);
   const version = u32le(tx.version);
   const useWitness = witness && hasWitness(tx.inputs);
-  if (!useWitness) return concat([version, body]);
-  return concat([version, Uint8Array.of(0x00, 0x01), body, serializeWitness(tx.inputs)]);
+  if (!useWitness) return concat([version, body, lockTime]);
+  return concat([version, Uint8Array.of(0x00, 0x01), body, serializeWitness(tx.inputs), lockTime]);
 }
 
 export function txid(tx) {
@@ -182,6 +207,87 @@ export function txid(tx) {
 
 export function wtxid(tx) {
   return hex.encode(reverseBytes(sha256d(serializeTx(tx, { witness: true }))));
+}
+
+function readU32(bytes, offset) {
+  return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0;
+}
+
+function readU64(bytes, offset) {
+  let value = 0n;
+  for (let i = 7; i >= 0; i -= 1) value = (value << 8n) | BigInt(bytes[offset + i]);
+  return value;
+}
+
+// The inverse of serializeTx, for a transaction that arrived as bytes (a PSBT
+// carries one). Parses what bitcoin actually puts on the wire; refuses
+// truncation rather than returning a half transaction.
+export function parseTx(bytes) {
+  if (!(bytes instanceof Uint8Array)) throw new Error('A transaction is bytes.');
+  let at = 0;
+  const need = (n) => {
+    if (at + n > bytes.length) throw new Error('The transaction ended before it was complete.');
+  };
+  need(4);
+  const version = readU32(bytes, at);
+  at += 4;
+  let witness = false;
+  if (bytes[at] === 0x00 && bytes[at + 1] === 0x01) {
+    witness = true;
+    at += 2;
+  }
+
+  const readSlice = () => {
+    const size = readVarint(bytes, at);
+    at = size.offset;
+    need(size.value);
+    const slice = bytes.slice(at, at + size.value);
+    at += size.value;
+    return slice;
+  };
+
+  const inputs = [];
+  const inCount = readVarint(bytes, at);
+  at = inCount.offset;
+  for (let i = 0; i < inCount.value; i += 1) {
+    need(36);
+    const txidValue = hex.encode(reverseBytes(bytes.slice(at, at + 32)));
+    at += 32;
+    const vout = readU32(bytes, at);
+    at += 4;
+    const scriptSig = readSlice();
+    need(4);
+    const sequence = readU32(bytes, at);
+    at += 4;
+    inputs.push({ txid: txidValue, vout, scriptSig, sequence });
+  }
+
+  const outputs = [];
+  const outCount = readVarint(bytes, at);
+  at = outCount.offset;
+  for (let i = 0; i < outCount.value; i += 1) {
+    need(8);
+    const value = readU64(bytes, at);
+    at += 8;
+    outputs.push({ value, script: readSlice() });
+  }
+
+  if (witness) {
+    for (const input of inputs) {
+      const stackCount = readVarint(bytes, at);
+      at = stackCount.offset;
+      const stack = [];
+      for (let i = 0; i < stackCount.value; i += 1) stack.push(readSlice());
+      input.witness = stack;
+    }
+  }
+
+  need(4);
+  const lockTime = readU32(bytes, at);
+  at += 4;
+  if (at !== bytes.length) throw new Error('The transaction has trailing bytes.');
+
+  return { version, inputs, outputs, lockTime };
 }
 
 // BIP-143, witness v0. The scriptCode of a P2WPKH input is the P2PKH script
