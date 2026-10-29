@@ -1,21 +1,31 @@
-// The socket side of asking a peer for a block's filter.
+// The socket side of talking to a Bitcoin peer.
 //
 // peers.js holds the policy and takes `fetchFilter` as a function precisely so
 // the policy can be tested against something that lies. This module is that
-// function's real body: it frames a getcfilters message, reads frames back, and
-// answers with the filter for the block it was asked about — or refuses.
+// function's real body: it shakes hands, frames messages, reads frames back,
+// and answers with the thing it was asked for — or refuses.
 //
 // The connection is injected. This module owns bytes and ordering; the caller
 // owns how a socket is opened (a Tor stream in the app, a loopback TCP socket
 // in the drill). That keeps the parser testable against bytes a stranger could
 // actually send.
 //
-// Not here yet, and stated so nobody assumes it: the Bitcoin version/verack
-// handshake. A mainnet node expects it before serving getcfilters, so this
-// transport is proven against the drill's peers and not yet against a real
-// node. It is the first thing the block-fetch step needs.
+// Every answer is checked against the question: a cfilter must name the block
+// hash that was asked about, and a block's bytes are returned for the caller to
+// hash and compare. Nothing here "asks nicely and hopes".
 
-import { BASIC_FILTER_TYPE, decodeCfilter, decodeFrame, encodeCfilter, encodeGetCfilters, frame } from './wire.js';
+import {
+  BASIC_FILTER_TYPE,
+  PROTOCOL_VERSION,
+  decodeCfilter,
+  decodeFrame,
+  decodeVersion,
+  encodeCfilter,
+  encodeGetCfilters,
+  encodeGetData,
+  encodeVersion,
+  frame,
+} from './wire.js';
 
 const MAX_BUFFER = 4 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -59,75 +69,130 @@ export function frameReader({ network = 'mainnet' } = {}) {
   };
 }
 
-// connect(peer) resolves to a socket-like object: write(bytes), end(), onData(fn),
-// onClose(fn). The promise settles with the filter that names the block asked
-// about. Anything else — another block, another filter type, a cut stream, a
-// timeout — is a refusal naming what happened.
-export function createFilterClient({ connect, network = 'mainnet', timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+// One connected, hand-shaken peer. Frames arrive into a queue; `nextFrame`
+// waits for one until the deadline, and refuses rather than hanging.
+async function openSession(socket, { network, timeoutMs, userAgent }) {
+  const reader = frameReader({ network });
+  const queue = [];
+  let failure = null;
+  let notify = null;
+  const wake = () => { const n = notify; notify = null; n?.(); };
+
+  socket.onData((chunk) => {
+    let frames;
+    try {
+      frames = reader.push(chunk);
+    } catch (error) {
+      failure = error;
+      wake();
+      return;
+    }
+    queue.push(...frames);
+    wake();
+  });
+  socket.onClose?.(() => {
+    failure = failure ?? new Error('That peer closed the connection before answering.');
+    wake();
+  });
+
+  const deadline = Date.now() + timeoutMs;
+
+  async function nextFrame() {
+    for (;;) {
+      if (queue.length) return queue.shift();
+      if (failure) throw failure;
+      const left = deadline - Date.now();
+      if (left <= 0) throw new Error('That peer did not answer in time.');
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, left);
+        notify = () => { clearTimeout(timer); resolve(); };
+      });
+    }
+  }
+
+  function send(command, payload = new Uint8Array()) {
+    socket.write(frame(command, payload, network));
+  }
+
+  // version/verack. A node sends its version as soon as it connects; this
+  // replies with its own and answers theirs with a verack. A ping before the
+  // handshake is answered rather than ignored.
+  send('version', encodeVersion({ userAgent }));
+  let gotVersion = false;
+  let gotVerack = false;
+  while (!(gotVersion && gotVerack)) {
+    const message = await nextFrame();
+    if (message.command === 'version') {
+      const remote = decodeVersion(message.payload);
+      if (remote.version < 70015) throw new Error('That peer speaks a protocol too old to ask for filters.');
+      gotVersion = true;
+      send('verack');
+    } else if (message.command === 'verack') {
+      gotVerack = true;
+    } else if (message.command === 'ping') {
+      send('pong', message.payload);
+    } else if (message.command === 'reject') {
+      throw new Error('That peer rejected the handshake.');
+    }
+  }
+
+  return { nextFrame, send, close: () => { try { socket.end?.(); } catch { /* already closed */ } } };
+}
+
+export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEFAULT_TIMEOUT_MS, userAgent } = {}) {
   if (typeof connect !== 'function') throw new Error('A peer client needs a way to open a connection.');
 
-  return async function fetchFilter(peer, blockHash) {
-    const asked = normalizeHash(blockHash);
+  async function withSession(peer, work) {
     const socket = await connect(peer);
-    const reader = frameReader({ network });
+    const session = await openSession(socket, { network, timeoutMs, userAgent });
+    try {
+      return await work(session);
+    } finally {
+      session.close();
+    }
+  }
 
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        finish(new Error('That peer did not answer in time.'));
-      }, timeoutMs);
-
-      function finish(error, value) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        try { socket.end?.(); } catch { /* a dead socket is already closed */ }
-        if (error) reject(error); else resolve(value);
-      }
-
-      socket.onClose?.(() => finish(new Error('That peer closed the connection before answering.')));
-
-      socket.onData((chunk) => {
-        let frames;
-        try {
-          frames = reader.push(chunk);
-        } catch (error) {
-          finish(error);
-          return;
+  // Ask for one block's filter. The answer counts only if it names the block
+  // that was asked about; anything else is a refusal naming what happened.
+  async function fetchFilter(peer, blockHash) {
+    const asked = normalizeHash(blockHash);
+    return withSession(peer, async (session) => {
+      session.send('getcfilters', encodeGetCfilters({ startHeight: 0, stopHash: asked }));
+      for (;;) {
+        const message = await session.nextFrame();
+        if (message.command === 'ping') { session.send('pong', message.payload); continue; }
+        if (message.command !== 'cfilter') continue;
+        const answer = decodeCfilter(message.payload);
+        if (answer.filterType !== BASIC_FILTER_TYPE) {
+          throw new Error('That peer answered with a filter type this wallet did not ask for.');
         }
-        for (const message of frames) {
-          if (message.command !== 'cfilter') continue;
-          let answer;
-          try {
-            answer = decodeCfilter(message.payload);
-          } catch (error) {
-            finish(error);
-            return;
-          }
-          if (answer.filterType !== BASIC_FILTER_TYPE) {
-            finish(new Error('That peer answered with a filter type this wallet did not ask for.'));
-            return;
-          }
-          if (answer.blockHash !== asked) {
-            // The one thing the framing cannot catch: a well-formed answer to a
-            // different question.
-            finish(new Error(`That peer answered about block ${answer.blockHash}, not ${asked}.`));
-            return;
-          }
-          finish(null, { filter: answer.filter, blockHash: answer.blockHash });
-          return;
+        if (answer.blockHash !== asked) {
+          throw new Error(`That peer answered about block ${answer.blockHash}, not ${asked}.`);
         }
-      });
-
-      try {
-        socket.write(frame('getcfilters', encodeGetCfilters({ startHeight: 0, stopHash: asked }), network));
-      } catch (error) {
-        finish(error);
+        return { filter: answer.filter, blockHash: answer.blockHash };
       }
     });
-  };
+  }
+
+  // Ask for one block's bytes. The bytes are returned unverified on purpose:
+  // the caller hashes them and compares with the hash it asked for, so the
+  // check lives with the code that also knows which block it wanted.
+  async function fetchBlock(peer, blockHash) {
+    const asked = normalizeHash(blockHash);
+    return withSession(peer, async (session) => {
+      session.send('getdata', encodeGetData({ hash: asked }));
+      for (;;) {
+        const message = await session.nextFrame();
+        if (message.command === 'ping') { session.send('pong', message.payload); continue; }
+        if (message.command !== 'block') continue;
+        return { bytes: message.payload };
+      }
+    });
+  }
+
+  return { fetchFilter, fetchBlock };
 }
 
 // The framing a loopback peer needs to speak, exported so the drill does not
 // re-invent it: a test that lies must lie in the same bytes a peer would send.
-export { frame, encodeCfilter, BASIC_FILTER_TYPE };
+export { frame, encodeCfilter, encodeVersion, decodeVersion, PROTOCOL_VERSION, BASIC_FILTER_TYPE };

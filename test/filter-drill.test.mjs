@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import { readFileSync } from 'node:fs';
 import { hex } from '@scure/base';
-import { buildBasicFilter, matchesFilter } from '../src/filters.js';
+import { blockOutputScripts, buildBasicFilter, matchesFilter } from '../src/filters.js';
+import { reverseBytes, sha256d } from '../src/tx.js';
 import { agreedFilter, createPeerPool } from '../src/peers.js';
-import { frameReader, createFilterClient } from '../src/peerClient.js';
-import { decodeFrame, decodeGetCfilters, encodeCfilter, frame } from '../src/wire.js';
+import { frameReader, createPeerClient } from '../src/peerClient.js';
+
+// The published BIP-158 testnet-19 vectors, read here as real blocks to serve
+// over a socket. The same file drives test/filters.test.mjs.
+const VECTORS = JSON.parse(
+  readFileSync(new URL('./fixtures/bip158-testnet-19.json', import.meta.url), 'utf8'),
+).slice(1).map((row) => row.map((field) => (typeof field === 'string' ? field.replace(/ /g, '') : field)));
+import { decodeFrame, decodeGetCfilters, decodeGetData, encodeCfilter, encodeVersion, frame } from '../src/wire.js';
 
 // The fabricated-filter drill.
 //
@@ -32,14 +40,17 @@ function witness(name, ...values) {
   console.log(`[drill] ${name}: ${values.map((v) => (v instanceof Uint8Array ? hex.encode(v).slice(0, 48) : String(v))).join(' | ')}`);
 }
 
-// A peer-shaped server: speaks wire frames, never anything else. `answer` gets
-// the decoded getcfilters and returns the raw bytes to send back (or writes
-// whatever it likes, because that is what a liar is).
+// A peer-shaped server: speaks version/verack like a node, then answers
+// getcfilters and getdata. `answer(command, request)` returns the raw bytes to
+// send back (or writes whatever it likes, because that is what a liar is).
 async function startPeer(answer) {
   const sockets = new Set();
   const server = net.createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
+    // Nodes open with their version; the wallet replies with its own and a
+    // verack, and this answers the wallet's version with a verack.
+    socket.write(frame('version', encodeVersion({ nonce: 1n })));
     let buffered = new Uint8Array(0);
     socket.on('data', (chunk) => {
       const joined = new Uint8Array(buffered.length + chunk.length);
@@ -53,10 +64,18 @@ async function startPeer(answer) {
           return; // a bad frame from the wallet is not this drill's subject
         }
         buffered = buffered.slice(message.size);
-        if (message.command !== 'getcfilters') continue;
-        const request = decodeGetCfilters(message.payload);
-        witness('peer received', message.command, request.stopHash);
-        for (const out of [].concat(answer(request) ?? [])) socket.write(out);
+        if (message.command === 'version') { socket.write(frame('verack')); continue; }
+        if (message.command === 'verack') continue;
+        let request = null;
+        try {
+          if (message.command === 'getcfilters') request = decodeGetCfilters(message.payload);
+          else if (message.command === 'getdata') request = decodeGetData(message.payload);
+        } catch {
+          continue;
+        }
+        if (!request) continue;
+        witness('peer received', message.command, request.stopHash ?? request.hash);
+        for (const out of [].concat(answer(message.command, request) ?? [])) socket.write(out);
       }
     });
   });
@@ -86,7 +105,7 @@ function poolFor(...servers) {
   return pool;
 }
 
-const client = (timeoutMs = 2000) => createFilterClient({ connect, timeoutMs });
+const client = (timeoutMs = 2000) => createPeerClient({ connect, timeoutMs }).fetchFilter;
 const honestAnswer = (filter, hash = BLOCK) => () => frame('cfilter', encodeCfilter({ blockHash: hash, filter }));
 
 test('the frame reader refuses a bad checksum and waits on a partial frame', () => {
@@ -196,5 +215,49 @@ test('THE DOCUMENTED LIMIT: two peers that agree on a fabricated filter are beli
     assert.equal(claimed, true);
   } finally {
     await a.close(); await b.close();
+  }
+});
+
+test('a real block served over a socket is the block that was asked for, and its filter is the published one', async () => {
+  const [height, blockHash, blockHex, prevScripts, , filterHex] = VECTORS[0];
+  const block = hex.decode(blockHex);
+  const peer = await startPeer((command) => (command === 'getdata' ? frame('block', block) : []));
+  try {
+    const { fetchBlock } = createPeerClient({ connect, timeoutMs: 2000 });
+    const { bytes } = await fetchBlock({ host: '127.0.0.1', port: peer.port }, blockHash);
+    witness('block served', `height ${height}`, `${bytes.length} bytes`, hex.encode(bytes.slice(0, 16)));
+
+    // The bytes really are that block: hash the 80-byte header ourselves.
+    assert.equal(bytes.length, block.length);
+    assert.equal(hex.encode(reverseBytes(sha256d(bytes.slice(0, 80)))), blockHash);
+
+    // And the filter built from the served block is the published filter,
+    // byte for byte, including the spent-script context from the vector.
+    const { scripts } = blockOutputScripts(bytes);
+    const filter = buildBasicFilter({
+      outputScripts: scripts,
+      prevScripts: prevScripts.map((script) => hex.decode(script)),
+      blockHash,
+    });
+    assert.equal(hex.encode(filter), filterHex);
+    witness('filter rebuilt from served bytes', hex.encode(filter).slice(0, 48));
+  } finally {
+    await peer.close();
+  }
+});
+
+test('a peer serving another block\'s bytes is caught by the hash the caller checks', async () => {
+  const asked = VECTORS[0];
+  const other = VECTORS[1];
+  const peer = await startPeer((command) => (command === 'getdata' ? frame('block', hex.decode(other[2])) : []));
+  try {
+    const { fetchBlock } = createPeerClient({ connect, timeoutMs: 2000 });
+    const { bytes } = await fetchBlock({ host: '127.0.0.1', port: peer.port }, asked[1]);
+    const actual = hex.encode(reverseBytes(sha256d(bytes.slice(0, 80))));
+    witness('wrong-block bytes', `asked ${asked[1].slice(0, 16)}`, `got ${actual.slice(0, 16)}`);
+    assert.notEqual(actual, asked[1]);
+    assert.equal(actual, other[1], 'the bytes are the other vector\'s block, so only the hash check catches this');
+  } finally {
+    await peer.close();
   }
 });

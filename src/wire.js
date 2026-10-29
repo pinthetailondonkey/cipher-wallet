@@ -167,4 +167,114 @@ export function encodeCompactSize(value) {
   throw new Error('That length does not fit in a CompactSize this build writes.');
 }
 
+
+// ---- handshake and block fetching -----------------------------------------
+
+export const PROTOCOL_VERSION = 70016;
+export const MSG_WITNESS_BLOCK = 0x40000002;
+
+function u64le(value) {
+  const out = new Uint8Array(8);
+  let n = BigInt(value);
+  for (let i = 0; i < 8; i += 1) { out[i] = Number(n & 0xffn); n >>= 8n; }
+  return out;
+}
+
+function readU64le(bytes, at) {
+  let value = 0n;
+  for (let i = 7; i >= 0; i -= 1) value = (value << 8n) | BigInt(bytes[at + i]);
+  return value;
+}
+
+function ipv6Of(text) {
+  // IPv4 peers are sent as ::ffff:a.b.c.d on the wire. Anything that is not an
+  // address this build can spell is the zero address, which asks nothing of the
+  // peer and reveals nothing.
+  const out = new Uint8Array(16);
+  const parts = String(text ?? '').trim().split('.').map(Number);
+  if (parts.length === 4 && parts.every((p) => Number.isInteger(p) && p >= 0 && p <= 255)) {
+    out[10] = 0xff; out[11] = 0xff;
+    out.set(parts, 12);
+  }
+  return out;
+}
+
+function netAddr({ services = 0n, ip = '', port = 0 } = {}) {
+  const out = new Uint8Array(26);
+  out.set(u64le(services), 0);
+  out.set(ipv6Of(ip), 8);
+  out[24] = (port >> 8) & 0xff;
+  out[25] = port & 0xff;
+  return out;
+}
+
+export function encodeVersion({
+  version = PROTOCOL_VERSION,
+  services = 0n,
+  timestamp = Math.floor(Date.now() / 1000),
+  addrRecv = {},
+  addrFrom = {},
+  nonce = 0n,
+  userAgent = '/cipher-wallet:0.1/',
+  startHeight = 0,
+  relay = false,
+} = {}) {
+  const agent = new TextEncoder().encode(String(userAgent));
+  if (agent.length > 255) throw new Error('A user agent is at most 255 bytes.');
+  const out = new Uint8Array(4 + 8 + 8 + 26 + 26 + 8 + 1 + agent.length + 4 + 1);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, version, true);
+  out.set(u64le(services), 4);
+  out.set(u64le(BigInt(timestamp)), 12);
+  out.set(netAddr(addrRecv), 20);
+  out.set(netAddr(addrFrom), 46);
+  out.set(u64le(nonce), 72);
+  out[80] = agent.length;
+  out.set(agent, 81);
+  view.setUint32(81 + agent.length, startHeight, true);
+  out[85 + agent.length] = relay ? 1 : 0;
+  return out;
+}
+
+export function decodeVersion(payload) {
+  if (!(payload instanceof Uint8Array) || payload.length < 4 + 8 + 8 + 26 + 26 + 8 + 1 + 4) {
+    throw new Error('That version message is cut short.');
+  }
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const version = view.getUint32(0, true);
+  const services = readU64le(payload, 4);
+  const timestamp = Number(readU64le(payload, 12));
+  const nonce = readU64le(payload, 72);
+  const agentLength = payload[80];
+  if (81 + agentLength + 4 > payload.length) throw new Error('That version message is cut short.');
+  const userAgent = new TextDecoder().decode(payload.slice(81, 81 + agentLength));
+  const startHeight = view.getUint32(81 + agentLength, true);
+  const relay = payload.length > 85 + agentLength ? payload[85 + agentLength] === 1 : undefined;
+  return { version, services, timestamp, nonce, userAgent, startHeight, relay };
+}
+
+// getdata: a count, then (type, hash) pairs. One block at a time is all this
+// wallet asks for.
+export function encodeGetData({ type = MSG_WITNESS_BLOCK, hash } = {}) {
+  const blockHash = hex.decode(String(hash ?? ''));
+  if (blockHash.length !== 32) throw new Error('A block hash is 32 bytes.');
+  const out = new Uint8Array(1 + 4 + 32);
+  out[0] = 1;
+  out[1] = type & 0xff;
+  out[2] = (type >> 8) & 0xff;
+  out[3] = (type >> 16) & 0xff;
+  out[4] = (type >>> 24) & 0xff;
+  out.set(blockHash, 5);
+  return out;
+}
+
+export function decodeGetData(payload) {
+  const count = readVarint(payload, 0);
+  if (count.value !== 1) throw new Error('This wallet asks for one block at a time.');
+  if (payload.length - count.offset !== 36) throw new Error('A getdata message is one type and one hash.');
+  const type = payload[count.offset] | (payload[count.offset + 1] << 8)
+    | (payload[count.offset + 2] << 16) | (payload[count.offset + 3] << 24);
+  return { type, hash: hex.encode(payload.slice(count.offset + 4)) };
+}
+
 export { MAGIC_BYTES };
