@@ -49,7 +49,7 @@ function encodeBlock(block) {
   let value = 0n;
   for (const byte of block) value = (value << 8n) | BigInt(byte);
   const width = ENCODED_BLOCK_SIZES[size];
-  const out = new Array(width).fill(ALPHABET[0]);
+  const out = Array.from({ length: width }, () => ALPHABET[0]);
   for (let i = width - 1; value > 0n; i -= 1) {
     out[i] = ALPHABET[Number(value % ALPHABET_SIZE)];
     value /= ALPHABET_SIZE;

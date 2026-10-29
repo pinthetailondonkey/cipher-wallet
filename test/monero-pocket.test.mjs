@@ -63,7 +63,6 @@ test('the view secret is derived from the spend secret, not stored beside it', (
 });
 
 test('the entropy is the Bitcoin path’s sibling, not a second scheme', () => {
-  const pocket = moneroPocket(SEED, 4);
   const derivation = derivePocket(SEED, 'xmr', 4);
   assert.equal(derivation.path, "m/44'/128'/0'/0'/4'");
 });
