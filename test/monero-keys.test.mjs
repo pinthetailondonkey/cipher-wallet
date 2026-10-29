@@ -107,7 +107,7 @@ test('the field constants are the numbers their own comments describe', () => {
 
 test('secret_key_to_public_key matches Monero for every vector', () => {
   const rows = positivesOf('secret_key_to_public_key');
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 32, `the positive vectors were cut or added to: ${rows.length}`);
   for (const { fields } of rows) {
     const [secret, , expected] = fields;
     assert.equal(hex(secretToPublic(unhex(secret))), expected);
@@ -116,7 +116,7 @@ test('secret_key_to_public_key matches Monero for every vector', () => {
 
 test('hash_to_scalar matches Monero for every vector', () => {
   const rows = VECTORS.filter((v) => v.command === 'hash_to_scalar');
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 32, `the positive vectors were cut or added to: ${rows.length}`);
   for (const { fields } of rows) {
     const [data, expected] = fields;
     assert.equal(hex(hashToScalar(unhex(data))), expected);
@@ -125,7 +125,7 @@ test('hash_to_scalar matches Monero for every vector', () => {
 
 test('hash to point matches Monero for every vector', () => {
   const rows = VECTORS.filter((v) => v.command === 'biased_hash_to_ec');
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 64, `the positive vectors were cut or added to: ${rows.length}`);
   for (const { fields } of rows) {
     const [publicKey, expected] = fields;
     assert.equal(hex(hashToPoint(unhex(publicKey))), expected);
@@ -134,7 +134,7 @@ test('hash to point matches Monero for every vector', () => {
 
 test('key derivation matches Monero for every vector', () => {
   const rows = positivesOf('generate_key_derivation');
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 32, `the positive vectors were cut or added to: ${rows.length}`);
   for (const { fields } of rows) {
     const [publicKey, secret, ok, expected] = fields;
     assert.equal(ok, 'true');
@@ -144,7 +144,7 @@ test('key derivation matches Monero for every vector', () => {
 
 test('key images match Monero for every vector', () => {
   const rows = VECTORS.filter((v) => v.command === 'generate_key_image');
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 32, `the positive vectors were cut or added to: ${rows.length}`);
   for (const { fields } of rows) {
     const [publicKey, secret, expected] = fields;
     assert.equal(hex(keyImage(unhex(publicKey), unhex(secret))), expected);
@@ -153,7 +153,7 @@ test('key images match Monero for every vector', () => {
 
 test('derived one-time keys match Monero for every vector', () => {
   const rows = positivesOf('derive_public_key');
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 32, `the positive vectors were cut or added to: ${rows.length}`);
   for (const { fields } of rows) {
     const [derivation, index, base, ok, expected] = fields;
     assert.equal(ok, 'true');
@@ -163,7 +163,7 @@ test('derived one-time keys match Monero for every vector', () => {
 
 test('view tags match Monero for every vector', () => {
   const rows = VECTORS.filter((v) => v.command === 'derive_view_tag');
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 16, `the positive vectors were cut or added to: ${rows.length}`);
   for (const { fields } of rows) {
     const [derivation, index, expected] = fields;
     assert.equal(viewTag(unhex(derivation), Number(index)), parseInt(expected, 16));
