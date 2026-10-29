@@ -4,7 +4,7 @@ import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import { hex } from '@scure/base';
 import { blockOutputScripts, buildBasicFilter, matchesFilter } from '../src/filters.js';
-import { reverseBytes, sha256d } from '../src/tx.js';
+import { reverseBytes, serializeTx, sha256d } from '../src/tx.js';
 import { agreedFilter, createPeerPool, verifiedFilter } from '../src/peers.js';
 import { frameReader, createPeerClient } from '../src/peerClient.js';
 
@@ -267,6 +267,53 @@ test('THE TIGHTENED LIMIT: two peers agreeing on a fabricated filter are refused
       /does not produce/,
     );
     witness('fabricated agreement with the block checked', 'refused');
+  } finally {
+    await a.close(); await b.close();
+  }
+});
+
+test('THE FORGE: a real header carrying a body it does not commit to is refused, at the socket', async () => {
+  // Executed against this wallet by AUDITOR before the merkle check existed:
+  // two peers agree on a filter (so agreement is satisfied), and serve a real,
+  // public header under which they attach a body that pays our script. The
+  // header hashes to the advertised block hash and the filter matches the body,
+  // so every check but one passes. The one that does not is the header's merkle
+  // root, and the refusal has to be the outcome.
+  const [, blockHash, realBlock] = VECTORS[0];
+  const forged = new Uint8Array([
+    ...hex.decode(realBlock).slice(0, 80),
+    0x01,
+    ...serializeTx({
+      version: 2,
+      inputs: [{ txid: '00'.repeat(32), vout: 0xffffffff, scriptSig: Uint8Array.of(0x51), sequence: 0xffffffff }],
+      outputs: [{ value: 5000000000n, script: OUR_SCRIPT }],
+      lockTime: 0,
+    }, { witness: false }),
+  ]);
+  // The lie is real: the header is unchanged, so it still hashes to the block
+  // hash both peers are quoting.
+  assert.equal(hex.encode(reverseBytes(sha256d(forged.slice(0, 80)))), blockHash);
+
+  const fabricated = buildBasicFilter({ blockHash, outputScripts: [OUR_SCRIPT] });
+  const answer = (command) => {
+    if (command === 'getcfilters') return frame('cfilter', encodeCfilter({ blockHash, filter: fabricated }));
+    if (command === 'getdata') return frame('block', forged);
+    return [];
+  };
+  const a = await startPeer(answer);
+  const b = await startPeer(answer);
+  try {
+    const pool = poolFor(a, b);
+    const client = createPeerClient({ connect, timeoutMs: 2000 });
+    // Agreement is satisfied — two peers, the same bytes.
+    const agreed = await agreedFilter(pool, client.fetchFilter, blockHash);
+    assert.equal(hex.encode(agreed.filter), hex.encode(fabricated));
+    // And the filter matches the forged body, which is why the body check is
+    // the only thing standing between this and a believed payment.
+    assert.equal(matchesFilter(agreed.filter, blockHash, OUR_SCRIPT), true);
+
+    await assert.rejects(verifiedFilter(pool, client, blockHash), /merkle root/);
+    witness('forged body under a real header', `agreement ${agreed.peers.length} peers`, 'merkle root: refused');
   } finally {
     await a.close(); await b.close();
   }

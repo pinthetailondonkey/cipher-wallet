@@ -17,7 +17,8 @@
 // than a hand-copied hash value.
 
 import { hex } from '@scure/base';
-import { parseTx, readVarint, reverseBytes, sha256d } from './tx.js';
+import { readVarint, reverseBytes, sha256d } from './tx.js';
+import { verifyBlockBody } from './merkle.js';
 
 export const BASIC_FILTER_TYPE = 0x00;
 export const GOLOMB_P = 19;
@@ -284,18 +285,16 @@ function concatBytes(parts) {
 
 // Where the outputs of a block live, for building its filter from the block
 // itself.
+//
+// The body is checked against its header before a single script is handed out
+// (src/merkle.js). A filter rebuilt from a body that no header commits to would
+// agree with itself and prove nothing, which is exactly the forge two colluding
+// peers used: keep a real header, attach a body of your own, and the filter
+// built from that body matches the filter you served.
 export function blockOutputScripts(blockBytes) {
-  if (!(blockBytes instanceof Uint8Array) || blockBytes.length < 81) {
-    throw new Error('A block is at least a header and one transaction.');
-  }
-  const blockHash = hex.encode(reverseBytes(sha256d(blockBytes.slice(0, 80))));
-  let at = 80;
-  const count = readVarint(blockBytes, at);
-  at = count.offset;
+  const { blockHash, transactions } = verifyBlockBody(blockBytes);
   const scripts = [];
-  for (let i = 0; i < count.value; i += 1) {
-    const tx = parseTx(blockBytes, { offset: at, exact: false });
-    at += tx.size;
+  for (const tx of transactions) {
     for (const output of tx.outputs) scripts.push(output.script);
   }
   return { blockHash, scripts };

@@ -272,6 +272,12 @@ export function parseTx(bytes, { offset = 0, exact = true } = {}) {
     outputs.push({ value, script: readSlice() });
   }
 
+  // Where the non-witness bytes end and the locktime begins: a txid is the
+  // serialization with the marker, the flag and the witness stacks cut out, and
+  // taking those two offsets from the bytes that arrived is exact, where
+  // re-serializing the parsed fields would depend on this build's encoder
+  // agreeing with the sender's byte for byte.
+  const bodyEnd = at - offset;
   if (witness) {
     for (const input of inputs) {
       const stackCount = readVarint(bytes, at);
@@ -282,12 +288,13 @@ export function parseTx(bytes, { offset = 0, exact = true } = {}) {
     }
   }
 
+  const lockTimeStart = at - offset;
   need(4);
   const lockTime = readU32(bytes, at);
   at += 4;
   if (exact && at !== bytes.length) throw new Error('The transaction has trailing bytes.');
 
-  return { version, inputs, outputs, lockTime, size: at - offset };
+  return { version, witness, inputs, outputs, lockTime, size: at - offset, bodyEnd, lockTimeStart };
 }
 
 // BIP-143, witness v0. The scriptCode of a P2WPKH input is the P2PKH script

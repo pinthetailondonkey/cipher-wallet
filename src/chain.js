@@ -12,6 +12,7 @@
 
 import { hex } from '@scure/base';
 import { reverseBytes, sha256d } from './tx.js';
+import { verifyBlockBody } from './merkle.js';
 
 const HEADER_SIZE = 80;
 
@@ -72,6 +73,11 @@ export async function walkBack({ fetchBlock, peer, tipHash, stopHash = null, max
     if (actual !== asked) {
       throw new Error(`That peer served block ${actual}, not ${asked}.`);
     }
+    // The hash above says the header is the block that was asked for. It says
+    // nothing about the body: a real header travels with whatever body the peer
+    // attaches. Checked here so a walk never carries a body its header does not
+    // commit to.
+    verifyBlockBody(bytes);
     if (previous && !blockConnects(bytes, previous)) {
       // The block we already accepted says its parent is X; this block hashes
       // to X but is not the parent on that same header check only if the bytes

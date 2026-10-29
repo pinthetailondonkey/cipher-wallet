@@ -89,8 +89,12 @@ service that could sign for you.
   broadcast. Witness v0 P2WPKH, SIGHASH_ALL, and exactly one input.
 - `src/filters.js` — BIP-157/158 compact block filters, so the wallet learns
   which blocks mention its own addresses without asking anyone.
+- `src/merkle.js` — a block body against its own header. Every transaction id,
+  folded into the merkle root the header names; a body that does not hash up to
+  its header is refused, so a real header cannot carry a body of a peer's own.
 - `src/peers.js` — no explorer, no clearnet peer unless deliberately allowed,
-  and filter data believed only when two independent peers agree.
+  and filter data believed only when two independent peers agree and the block
+  both checks.
 - `src/spend.js` — one pocket pays one spend; change returns to a fresh pocket;
   dust goes to the miner instead of becoming an unspendable output.
 
@@ -123,16 +127,23 @@ cannot hide a payment or invent one. When they disagree nothing is believed.
 That agreement anchors on the first peer that answers and is checked against one
 more: a compromised peer can force a refusal, and cannot force a false answer.
 
-**Two peers that lie together are not yet covered.** Agreement is two strangers
-saying the same thing, and two strangers can agree on a lie. The filter is also
-checked against the block those peers serve — but as of these bytes only the
-block's 80-byte header is hashed. Nothing checks the transactions inside the
-body against the merkle root the header carries, so a peer can keep a real,
-public header, attach a body of its own choosing, and pass both checks. Two
-colluding peers can therefore still make this wallet believe a payment that is
-not in the chain. This is a known open limit, stated here rather than left for a
-reader to assume otherwise; it is closed when the body's transaction ids are
-checked against the header's merkle root.
+Two peers that lie together are covered only because the block is checked as a
+whole. Agreement is two strangers saying the same thing, and two strangers can
+agree on a lie; so the block those peers serve is checked two ways. Its 80-byte
+header must hash to the block hash that was asked for, and the transactions in
+its body must produce the merkle root the header names (`src/merkle.js`). The
+second check is the one that matters: without it a peer keeps a real, public
+header, attaches a body of its own choosing that pays whatever it likes, and
+both the header check and a filter rebuilt from that body agree with the lie.
+With it, a body that does not hash up to its own header is refused outright.
+Both checks are exercised by a forged body in `test/filter-drill.test.mjs`,
+served over a socket by two agreeing peers.
+
+What this still does not do: it verifies a body against its header, not the
+chain's proof of work. A header's own work is not checked here, so a peer that
+mines a private header (or is handed one) can build a self-consistent block. The
+chain walk in `src/chain.js` links blocks and refuses a body its header does not
+commit to; deciding which chain is the real one is not in this build.
 
 ### What has gone wrong here
 

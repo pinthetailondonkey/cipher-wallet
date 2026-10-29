@@ -165,12 +165,15 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {})
 
 // The filter a wallet may act on: agreed by two peers AND rebuilt from the
 // block itself. Agreement alone is two peers saying the same thing, and two
-// lying peers say the same thing too; the block is meant to be the third
-// witness. It is not one yet, and this comment used to say it was: only the
-// 80-byte header is hashed here. Nothing checks the transactions in the body
-// against the merkle root the header carries, so a peer can keep a real header
-// and attach a body of its own, and two colluding peers can still make a filter
-// believed. That is an open limit, not a closed one.
+// lying peers say the same thing too, so the block is the third witness. It
+// only became one when the body started being checked: a header that hashes to
+// the advertised hash says nothing about the transactions travelling under it,
+// and a filter rebuilt from a forged body matches the forged filter. The body
+// is checked against the header's merkle root in blockOutputScripts
+// (src/merkle.js), which throws before this function can compare filters, so a
+// body the header does not commit to is a refusal here rather than a believed
+// payment. This comment previously claimed the forge was impossible while it
+// was not; the false claim is recorded in README and pinned by a test.
 export async function verifiedFilter(pool, client, blockHash, { prevScripts = [], peers } = {}) {
   const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { peers });
   const asked = String(blockHash ?? '').trim().toLowerCase();

@@ -4,7 +4,7 @@ import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import { hex } from '@scure/base';
 import { blockHash, blockHeader, blockConnects, headerConnects, previousBlockHash, walkBack } from '../src/chain.js';
-import { sha256d } from '../src/tx.js';
+import { reverseBytes, serializeTx, sha256d, txid } from '../src/tx.js';
 import { createPeerClient, decodeVersion, encodeVersion, frame } from '../src/peerClient.js';
 import { decodeFrame, decodeGetData } from '../src/wire.js';
 
@@ -16,10 +16,29 @@ function witness(name, ...values) {
   console.log(`[walk] ${name}: ${values.join(' | ')}`);
 }
 
-function headerWith(prevDigest, fill = 3) {
+function headerWith(prevDigest, fill = 3, merkleRoot = null) {
   const out = new Uint8Array(80).fill(fill);
   out.set(prevDigest, 4);
+  if (merkleRoot) out.set(reverseBytes(hex.decode(merkleRoot)), 36);
   return out;
+}
+
+// A block-shaped body that a header can actually commit to: one transaction,
+// whose id is written into the header's merkle field. These are never mined and
+// never presented as mined; what they have that a header alone does not is a
+// body the header verifies. A body of zero transactions is what the walk used
+// to be tested against, and it is not a block.
+function blockWith(prevDigest, fill) {
+  const tx = {
+    version: 1,
+    inputs: [{ txid: '00'.repeat(32), vout: 0xffffffff, scriptSig: Uint8Array.of(fill), sequence: 0xffffffff }],
+    outputs: [{ value: 5000000000n, script: Uint8Array.of(0x51) }],
+    lockTime: 0,
+  };
+  const raw = serializeTx(tx, { witness: false });
+  const header = headerWith(prevDigest, fill, txid(tx));
+  const block = new Uint8Array([...header, 0x01, ...raw]);
+  return { block, header };
 }
 
 test('the previous-block field is read from bytes 4..36, and genesis points at zeros', () => {
@@ -94,14 +113,12 @@ function connect(peer) {
   });
 }
 
-// A two-link chain: a mined-shaped (but never mined) parent header, and a child
-// header that names it. Bodies are header plus a zero transaction count, which
-// is enough for a walk and is not presented as a real block.
-const PARENT_HEADER = headerWith(new Uint8Array(32), 7);
-const PARENT = new Uint8Array([...PARENT_HEADER, 0x00]);
+// A two-link chain: a mined-shaped (but never mined) parent, and a child that
+// names it. Each body carries one transaction that its own header commits to.
+const { block: PARENT, header: PARENT_HEADER } = blockWith(new Uint8Array(32), 7);
 const PARENT_HASH = blockHash(PARENT);
-const TIP_HEADER = headerWith(sha256d(PARENT_HEADER), 8);
-const TIP = { bytes: new Uint8Array([...TIP_HEADER, 0x00]) };
+const { block: TIP_BYTES } = blockWith(sha256d(PARENT_HEADER), 8);
+const TIP = { bytes: TIP_BYTES };
 const TIP_HASH = blockHash(TIP.bytes);
 
 test('a two-block walk accepts a link that joins and stops where it is told', async () => {
