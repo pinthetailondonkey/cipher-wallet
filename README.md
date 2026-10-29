@@ -44,8 +44,12 @@ the same mnemonic by re-deriving this path, as this app does.
 Bitcoin pockets are P2WPKH. Monero has no BIP32 of its own, so the derived 32
 bytes are entropy for Monero's key set, reduced in Phase 3. That much is built:
 `src/monero/` holds the key operations, base58 and address encoding, all pinned
-to Monero's own generated vectors. A pocket does not yet resolve to a Monero
-address, and nothing on the Monero side is signed or broadcast.
+to Monero's own generated vectors, and `src/monero/pocket.js` turns one pocket
+into one whole Monero wallet — its own spend and view keys and a standard
+address — with the derivation frozen and its first three addresses pinned by a
+test. What is not built: scanning blocks for payments, decrypting RingCT
+amounts, and anything that spends or broadcasts. Nothing on the Monero side has
+been funded or touched mainnet.
 
 ## The vault is two layers
 
