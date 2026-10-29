@@ -174,7 +174,7 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {})
 // body the header does not commit to is a refusal here rather than a believed
 // payment. This comment previously claimed the forge was impossible while it
 // was not; the false claim is recorded in README and pinned by a test.
-export async function verifiedFilter(pool, client, blockHash, { prevScripts = [], peers } = {}) {
+export async function verifiedFilter(pool, client, blockHash, { prevScripts, peers } = {}) {
   const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { peers });
   const asked = String(blockHash ?? '').trim().toLowerCase();
 

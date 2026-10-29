@@ -305,9 +305,17 @@ export function blockOutputScripts(blockBytes) {
 // non-coinbase inputs — and compared byte for byte. `prevScripts` is the chain
 // context the caller has already scanned; a caller that does not know it cannot
 // verify a filter, and must not pretend to.
-export function filterMatchesBlock({ filter, block, prevScripts = [] } = {}) {
+export function filterMatchesBlock({ filter, block, prevScripts } = {}) {
   if (!(filter instanceof Uint8Array) || filter.length === 0) throw new Error('A filter is bytes.');
   if (!(block instanceof Uint8Array) || block.length === 0) throw new Error('A block is bytes.');
+  // A rebuild without the scripts this block's inputs spend produces a filter
+  // that cannot equal the real one for any block that spends anything, so the
+  // honest answer is a refusal, not `false`. `false` reads as "this filter is
+  // wrong"; the truth is "this wallet cannot tell". An empty list is a claim,
+  // and it is only true when the block spends nothing from outside itself.
+  if (!Array.isArray(prevScripts)) {
+    throw new Error('Verifying a filter needs the scripts this block\'s inputs spend. Pass [] only when the block spends nothing outside itself.');
+  }
   const { blockHash, scripts } = blockOutputScripts(block);
   const rebuilt = buildBasicFilter({ outputScripts: scripts, prevScripts, blockHash });
   if (rebuilt.length !== filter.length) return false;

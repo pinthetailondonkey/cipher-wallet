@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import { hex } from '@scure/base';
-import { blockOutputScripts, buildBasicFilter, matchesFilter } from '../src/filters.js';
+import { blockOutputScripts, buildBasicFilter, filterMatchesBlock, matchesFilter } from '../src/filters.js';
 import { reverseBytes, serializeTx, sha256d } from '../src/tx.js';
 import { agreedFilter, createPeerPool, verifiedFilter } from '../src/peers.js';
 import { frameReader, createPeerClient } from '../src/peerClient.js';
@@ -270,6 +270,25 @@ test('THE TIGHTENED LIMIT: two peers agreeing on a fabricated filter are refused
   } finally {
     await a.close(); await b.close();
   }
+});
+
+test('a filter cannot be verified without the scripts the block spends, and says so instead of answering false', () => {
+  const [, , blockHex, prevScripts, , filterHex] = VECTORS[0];
+  const block = hex.decode(blockHex);
+  // No context at all is a refusal: "this wallet cannot tell" is not the same
+  // answer as "this filter is wrong", and returning false would hide which one
+  // it was.
+  assert.throws(() => filterMatchesBlock({ filter: hex.decode(filterHex), block }), /scripts this block's inputs spend/);
+  // An empty list is a claim, and for the genesis block it is the true one:
+  // nothing outside the block is spent.
+  assert.equal(filterMatchesBlock({ filter: hex.decode(filterHex), block, prevScripts: [] }), true);
+  // With the published context it is also true.
+  assert.equal(filterMatchesBlock({
+    filter: hex.decode(filterHex),
+    block,
+    prevScripts: prevScripts.map((script) => hex.decode(script)),
+  }), true);
+  witness('missing context', 'refused, not false');
 });
 
 test('THE FORGE: a real header carrying a body it does not commit to is refused, at the socket', async () => {
