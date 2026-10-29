@@ -231,9 +231,10 @@ function feFromBytes(bytes) {
 //
 // The four correction constants are not guessable: pairing the wrong one with
 // the wrong branch yields a point that is not on the curve, or a different
-// point that is. The pairing above is the one Monero's own 64 vectors confirm;
-// it was settled by running them, not by reading the C by eye, and it is worth
-// re-running them after any edit here.
+// point that is. The pairing above is the one Monero's own 64 vectors confirm.
+// It was settled by running them, not by reading the C by eye, which is how it
+// was found; it has since been checked arm for arm against crypto-ops.c at the
+// same pinned commit, and it is worth re-running the vectors after any edit here.
 export function fromFieldElement(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length !== 32) {
     throw new Error('The map takes 32 bytes.');
@@ -267,12 +268,14 @@ export function fromFieldElement(bytes) {
       z = MA;
       sign = 1n;
     } else {
-      // w == -x: sqrt(2A(A+2)).
+      // w == -xx: multiply by sqrt(-2A(A+2)), which is FFFB1. The C reaches
+      // this arm through fe_isnonzero(w - xx) then not fe_isnonzero(w + xx).
       X = mod(X0 * FFFB1 * u);
       z = mod(MA * v);
     }
   } else {
-    // w == x: sqrt(-2A(A+2)).
+    // w == xx: multiply by sqrt(2A(A+2)), which is FFFB2. The C's own note on
+    // this arm reads "u * sqrt(2 * A * (A + 2) * w / x)".
     X = mod(X0 * FFFB2 * u);
     z = mod(MA * v);
   }
