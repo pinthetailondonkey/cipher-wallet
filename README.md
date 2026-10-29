@@ -3,9 +3,11 @@
 A privacy wallet. One root secret, a fresh pocket per payment, and a spend that
 never needs a custodian and never needs a node you run.
 
-This repo is Phases 0 to 2: the units, the root and pocket derivation, the
-vault, the receive path, and the Bitcoin spend path. No Monero yet, no merging,
-no recovery shards. Nothing here has been run against real money.
+This repo is Phases 0 to 2 complete, and Phase 3 part-built: the units, the
+root and pocket derivation, the vault, the receive path, the Bitcoin spend path,
+and the Monero keys, base58 and address encoding. There is no Monero
+transaction, no merging and no recovery shards, and nothing here has been run
+against real money.
 
 ## Setup, once per checkout
 
@@ -40,8 +42,10 @@ that a standard wallet cannot find a single pocket by scanning; it restores from
 the same mnemonic by re-deriving this path, as this app does.
 
 Bitcoin pockets are P2WPKH. Monero has no BIP32 of its own, so the derived 32
-bytes are entropy for Monero's key set, reduced in Phase 3 — this build does not
-emit a Monero address yet.
+bytes are entropy for Monero's key set, reduced in Phase 3. That much is built:
+`src/monero/` holds the key operations, base58 and address encoding, all pinned
+to Monero's own generated vectors. A pocket does not yet resolve to a Monero
+address, and nothing on the Monero side is signed or broadcast.
 
 ## The vault is two layers
 
