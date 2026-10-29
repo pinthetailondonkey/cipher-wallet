@@ -1,10 +1,19 @@
 # Cipher Wallet
 
 A privacy wallet. One root secret, a fresh pocket per payment, and a spend that
-never needs a custodian.
+never needs a custodian and never needs a node you run.
 
-This repo is Phase 0: the units, the root and pocket derivation, and the vault
-primitive. No relay, no chain call, no spend. Nothing here talks to a network.
+This repo is Phases 0 to 2: the units, the root and pocket derivation, the
+vault, the receive path, and the Bitcoin spend path. No Monero yet, no merging,
+no recovery shards. Nothing here has been run against real money.
+
+## Setup, once per checkout
+
+    git config core.hooksPath .githooks
+
+The pre-commit hook scans staged additions for key-shaped material. It is
+committed, but a clone does not carry config, so the line above is what makes it
+live. Without it the hook exists and does nothing.
 
 ## The shape
 
@@ -34,14 +43,6 @@ Bitcoin pockets are P2WPKH. Monero has no BIP32 of its own, so the derived 32
 bytes are entropy for Monero's key set, reduced in Phase 3 — this build does not
 emit a Monero address yet.
 
-## Moved into the derive path from existing code
-
-- `src/units.js` is ported verbatim from `deal-engine/src/units.js` (the
-  1-piconero bug class). Bitcoin 8 decimals, Monero 12, round half up, never a
-  float.
-- `src/vault.js` is ported from the vault half of `cipher/src/useIdentity.js`:
-  PBKDF2-SHA256 at 600,000 iterations, per-vault salt, AES-GCM-256.
-
 ## The vault is two layers
 
 The PIN vault (`src/vault.js`) is the inner layer. The device envelope
@@ -64,8 +65,57 @@ answer that echoes the ask.
 Storage is a small key/value interface: IndexedDB in the app, a memory adapter
 in tests (the IDB adapter itself is exercised by the UI layer).
 
+## The spend path
+
+The transaction is built and signed on this device. Nothing is handed to a
+service that could sign for you.
+
+- `src/tx.js` — serialization, the txid that ignores the witness, and the
+  BIP-143 signature hash for witness v0. Checked byte for byte against the
+  published BIP-143 vector, including the signed transaction.
+- `src/address.js` — the payee address, decoded or refused. Witness v0 must use
+  bech32 and v1+ bech32m; mixed case is refused; another network is refused.
+- `src/psbt.js` — BIP-174. The signed artifact can be read before anything is
+  broadcast. Witness v0 P2WPKH, SIGHASH_ALL, and exactly one input.
+- `src/filters.js` — BIP-157/158 compact block filters, so the wallet learns
+  which blocks mention its own addresses without asking anyone.
+- `src/peers.js` — no explorer, no clearnet peer unless deliberately allowed,
+  and filter data believed only when two independent peers agree.
+- `src/spend.js` — one pocket pays one spend; change returns to a fresh pocket;
+  dust goes to the miner instead of becoming an unspendable output.
+
+### What a spend does not prove
+
+Each state is a separate claim and only the last two involve anyone else:
+
+- **built** and **signed** — a transaction exists and a signature is on it.
+  Nothing has left the device. A signed transaction is not a payment.
+- **broadcast** — a peer took the bytes. Being taken is not being mined.
+- **seen** — a watcher reports the transaction mined. For Bitcoin, seen means
+  mined; there is no 0-confirmation state in this wallet.
+- **confirmed** — a watcher reports three confirmations.
+
+A watcher is the only thing that moves a payment. The wallet's own view of its
+own transaction is not evidence, and a vendor's wallet is not a chain
+confirmation.
+
+### What it costs in privacy
+
+The peer serving compact block filters learns *which blocks matched your wallet*
+over time, because you keep asking for the next filter after a hit. That is the
+price of not running a node. The mitigation is several peers, chosen by you,
+over Tor, rotating between them — not a claim that the filter is free. A block
+explorer would learn the same thing plus your address and your IP in one
+request, which is why it is refused.
+
+Filter data is accepted only when two independent peers agree, so one lying peer
+cannot hide a payment or invent one. When they disagree nothing is believed.
+
 ## Gates
 
     npm run build   # every module parses and resolves
     npm run lint
     npm test
+
+Test vectors are vendored under `test/fixtures`; see the README there for
+provenance and the one visible transformation applied to them.

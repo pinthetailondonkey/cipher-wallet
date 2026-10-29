@@ -22,7 +22,9 @@ same to a regular expression. The scanner stays on; the fixture carries a space
 instead. To re-derive it, download the file above, check the sha256, and insert
 a space after character 32 of each 64-character hex string.
 
-This is a recorded trade-off and not a settled policy: a Bitcoin test fixture
-will always contain 32-byte hex values, so the hook will keep colliding with
-them. Whether the hook should exempt this directory is a decision for the
-founder, not for me.
+**This is settled policy, not a workaround.** The founder ruled on 2026-10-29:
+the hook is never edited and no fixtures exception is ever added, so the space
+after character 32 is the standing way to keep a published test vector in the
+repository without weakening the scanner. Any future fixture containing a bare
+32-byte hex value follows the same pattern and records its source checksum
+here.
