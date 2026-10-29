@@ -63,6 +63,23 @@ test('when every node has failed the wallet says so, and never says "no payment"
   witness('exhausted', 'failed read', 'not a payment verdict');
 });
 
+// BOSS's ask: a user who HAS a node and a user who has NONE must be told
+// different things. The first would otherwise go looking for a setting that is
+// already right, and the second would keep retrying a list that is empty.
+test('"nothing configured" and "everything failed" are two different sentences', () => {
+  let none = '';
+  try { createNodePool(); } catch (error) { none = error.message; }
+  const pool = createNodePool({ nodes: [ONION_NODE] });
+  pool.abandon(pool.pick());
+  let failed = '';
+  try { pool.pick(); } catch (error) { failed = error.message; }
+  assert.ok(none && failed);
+  assert.notEqual(none, failed);
+  assert.match(none, /No Monero node is configured/);
+  assert.match(failed, /No configured Monero node answered/);
+  witness('two refusals', `none: ${none.slice(0, 28)}…`, `failed: ${failed.slice(0, 28)}…`);
+});
+
 test('an address that is not a host:port is refused rather than tried', () => {
   assert.throws(() => createNodePool({ nodes: ['http://node.example'] }), /not a node address/);
   assert.throws(() => createNodePool({ override: 'node.example' }), /not a node address/);
