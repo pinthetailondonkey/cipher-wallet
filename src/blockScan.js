@@ -24,12 +24,21 @@
 // `unresolved` and suppress the verdict, because this wallet cannot then tell a
 // lie from an ordinary spend of older money.
 //
-// The limit, stated where it will be read: a filter that OMITS our script means
-// this wallet does not report a payment from that block. Today the body is in
-// hand anyway, so the omission hides nothing that the block does not also hide
-// by lying about a script; the moment header-first walking lands, an omission
-// means the body is never fetched, and a pair of peers agreeing on the omission
-// can hide a payment outright.
+// That suppression makes `quiet` nearly inert on a real chain, and the header
+// has to say so rather than imply a working lie detector. Almost every real
+// block spends an output older than the walk's stop, so almost every block
+// carries an unresolved input and almost every lie is suppressed. Measured, two
+// otherwise identical lies: a filter naming us over a payless coinbase-only
+// block reports quiet 1; the same lie over a block holding one unrelated old
+// coin reports quiet 0. Resolving those inputs needs the pocket store, which in
+// production already knows our outputs — that is the fix, and it is not here.
+//
+// The limit, stated where it will be read: while every body is read, NO filter
+// — omitting our script or lying about it — can hide a payment. An omission
+// costs nothing visible; a lie costs one `quiet` entry and nothing else. The
+// moment header-first walking lands, an omission means the body is never
+// fetched, and a pair of peers agreeing on the omission can hide a payment
+// outright.
 
 import { matchesFilter } from './filters.js';
 import { walkBack } from './chain.js';
