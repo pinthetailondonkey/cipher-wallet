@@ -98,9 +98,10 @@ nothing about pockets it was never told about.
 
 ## What this does not yet cover
 
-- **Detection itself.** This section is a design, not a built thing: nothing in
-  `src/` calls `moneroPocket` except its test, so no block has been fetched and
-  no output scanned. It is listed first because everything below depends on it.
+- **Detection itself.** The matching rule is built (`src/monero/scan.js`) and
+  tested against transactions built locally the way a sender builds them. What
+  is not built: fetching blocks, and scanning real ones. It is listed first
+  because everything below depends on it.
 - **Amounts.** A matched output proves an output is ours, not how much it
   carries. RingCT amounts have to be decrypted with the same derivation before a
   payment can be shown as an amount, and that is the next piece of work.

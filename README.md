@@ -47,8 +47,10 @@ bytes are entropy for Monero's key set, reduced in Phase 3. That much is built:
 to Monero's own generated vectors, and `src/monero/pocket.js` turns one pocket
 into one whole Monero wallet — its own spend and view keys and a standard
 address — with the derivation frozen and its first three addresses pinned by a
-test. What is not built: scanning blocks for payments, decrypting RingCT
-amounts, and anything that spends or broadcasts. Nothing on the Monero side has
+test. The matching rule for spotting an output that is ours is built
+(`src/monero/scan.js`) and tested against locally built transactions. What is
+not built: fetching blocks and scanning real ones, decrypting RingCT amounts,
+and anything that spends or broadcasts. Nothing on the Monero side has
 been funded or touched mainnet.
 
 ## The vault is two layers
