@@ -129,6 +129,13 @@ were right the first time.
   published test vectors, not by review.
 - **Monero's hash-to-point map was wrong for half of all inputs**, while
   producing correct points for the other half. Published vectors caught it.
+- **The vectors that would have caught it were cut away.** The fixture was made
+  by taking the first N lines of each section, and Monero puts its refusal
+  vectors at the ends, so all 48 vectors that say "this input must be refused"
+  were dropped silently. The suite was green because the negative half had been
+  removed. A test that only ever sees inputs that should work cannot tell a
+  guard from a missing one, which is the same shape as the four change tests
+  above.
 
 That last one is the whole argument for pinned vectors, so it is worth saying
 plainly: a map that is wrong half the time looks exactly like a map that is
