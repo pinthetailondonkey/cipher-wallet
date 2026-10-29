@@ -1,0 +1,30 @@
+#!/bin/sh
+# Refuse a commit that adds key-shaped material.
+# Checked against the ADDED lines only, so existing tests and fixtures do not
+# trip it. This is a backstop, not a substitute for looking.
+set -eu
+
+added=$(git diff --cached --no-color -U0 -- . | grep '^+' | grep -v '^+++' || true)
+
+fail=0
+check() {
+  label=$1
+  pattern=$2
+  if printf '%s\n' "$added" | grep -Eq "$pattern"; then
+    echo "pre-commit: refusing a $label in the staged changes." >&2
+    printf '%s\n' "$added" | grep -En "$pattern" | head -5 >&2
+    fail=1
+  fi
+}
+
+check "private key header" 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY'
+check "bech32 nsec"       '\bnsec1[02-9ac-hj-np-z]{20,}'
+check "BIP32 private key" '\bxprv[1-9A-HJ-NP-Za-km-z]{50,}'
+check "32-byte hex secret" '(^|[^0-9a-fA-F])[0-9a-fA-F]{64}([^0-9a-fA-F]|$)'
+check "env assignment"    '^\+[A-Z0-9_]*(SECRET|TOKEN|PASSWORD|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*[^ ]'
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-commit: nothing was committed." >&2
+  exit 1
+fi
+exit 0

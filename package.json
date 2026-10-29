@@ -1,0 +1,25 @@
+{
+  "name": "cipher-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cipher Wallet: a privacy wallet with a rotating receive identity.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "lint": "oxlint src test scripts",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@scure/base": "^2.0.0",
+    "@scure/bip32": "^2.0.0",
+    "@scure/bip39": "^2.0.0"
+  },
+  "devDependencies": {
+    "oxlint": "^1.0.0"
+  }
+}
