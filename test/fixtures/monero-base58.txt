@@ -1,0 +1,201 @@
+encode_block 00 11
+encode_block 39 1z
+encode_block ff 5Q
+encode_block 0000 111
+encode_block 0039 11z
+encode_block 0100 15R
+encode_block ffff LUv
+encode_block 000000 11111
+encode_block 000039 1111z
+encode_block 010000 11LUw
+encode_block ffffff 2UzHL
+encode_block 00000039 11111z
+encode_block ffffffff 7YXq9G
+encode_block 0000000039 111111z
+encode_block ffffffffff VtB5VXc
+encode_block 000000000039 11111111z
+encode_block ffffffffffff 3CUsUpv9t
+encode_block 00000000000039 111111111z
+encode_block ffffffffffffff Ahg1opVcGW
+encode_block 0000000000000039 1111111111z
+encode_block ffffffffffffffff jpXCZedGfVQ
+encode_block 0000000000000000 11111111111
+encode_block 0000000000000001 11111111112
+encode_block 0000000000000008 11111111119
+encode_block 0000000000000009 1111111111A
+encode_block 000000000000003a 11111111121
+encode_block 00ffffffffffffff 1Ahg1opVcGW
+encode_block 06156013762879f7 22222222222
+encode_block 05e022ba374b2a00 1z111111111
+encode 00 11
+encode 0000 111
+encode 000000 11111
+encode 00000000 111111
+encode 0000000000 1111111
+encode 000000000000 111111111
+encode 00000000000000 1111111111
+encode 0000000000000000 11111111111
+encode 000000000000000000 1111111111111
+encode 00000000000000000000 11111111111111
+encode 0000000000000000000000 1111111111111111
+encode 000000000000000000000000 11111111111111111
+encode 00000000000000000000000000 111111111111111111
+encode 0000000000000000000000000000 11111111111111111111
+encode 000000000000000000000000000000 111111111111111111111
+encode 00000000000000000000000000000000 1111111111111111111111
+encode 06156013762879f7ffffffffff 22222222222VtB5VXc
+decode_pos 11 00
+decode_pos 5Q ff
+decode_pos 111 0000
+decode_pos LUv ffff
+decode_pos 11111 000000
+decode_pos 2UzHL ffffff
+decode_pos 111111 00000000
+decode_pos 7YXq9G ffffffff
+decode_pos 1111111 0000000000
+decode_pos VtB5VXc ffffffffff
+decode_pos 111111111 000000000000
+decode_pos 3CUsUpv9t ffffffffffff
+decode_pos 1111111111 00000000000000
+decode_pos Ahg1opVcGW ffffffffffffff
+decode_pos 11111111111 0000000000000000
+decode_pos jpXCZedGfVQ ffffffffffffffff
+decode_neg 1
+decode_neg z
+decode_neg 5R
+decode_neg zz
+decode_neg LUw
+decode_neg zzz
+decode_neg 1111
+decode_neg zzzz
+decode_neg 2UzHM
+decode_neg zzzzz
+decode_neg 7YXq9H
+decode_neg zzzzzz
+decode_neg VtB5VXd
+decode_neg zzzzzzz
+decode_neg 11111111
+decode_neg zzzzzzzz
+decode_neg 3CUsUpv9u
+decode_neg zzzzzzzzz
+decode_neg Ahg1opVcGX
+decode_neg zzzzzzzzzz
+decode_neg jpXCZedGfVR
+decode_neg zzzzzzzzzzz
+decode_neg 01111111111
+decode_neg 11111111110
+decode_neg 11111011111
+decode_neg I1111111111
+decode_neg O1111111111
+decode_neg l1111111111
+decode_neg _1111111111
+decode_pos - -
+decode_pos 5Q ff
+decode_pos LUv ffff
+decode_pos 2UzHL ffffff
+decode_pos 7YXq9G ffffffff
+decode_pos VtB5VXc ffffffffff
+decode_pos 3CUsUpv9t ffffffffffff
+decode_pos Ahg1opVcGW ffffffffffffff
+decode_pos jpXCZedGfVQ ffffffffffffffff
+decode_pos jpXCZedGfVQ5Q ffffffffffffffffff
+decode_pos jpXCZedGfVQLUv ffffffffffffffffffff
+decode_pos jpXCZedGfVQ2UzHL ffffffffffffffffffffff
+decode_pos jpXCZedGfVQ7YXq9G ffffffffffffffffffffffff
+decode_pos jpXCZedGfVQVtB5VXc ffffffffffffffffffffffffff
+decode_pos jpXCZedGfVQ3CUsUpv9t ffffffffffffffffffffffffffff
+decode_pos jpXCZedGfVQAhg1opVcGW ffffffffffffffffffffffffffffff
+decode_pos jpXCZedGfVQjpXCZedGfVQ ffffffffffffffffffffffffffffffff
+decode_neg 1
+decode_neg z
+decode_neg 1111
+decode_neg zzzz
+decode_neg 11111111
+decode_neg zzzzzzzz
+decode_neg 123456789AB1
+decode_neg 123456789ABz
+decode_neg 123456789AB1111
+decode_neg 123456789ABzzzz
+decode_neg 123456789AB11111111
+decode_neg 123456789ABzzzzzzzz
+decode_neg 5R
+decode_neg zz
+decode_neg LUw
+decode_neg zzz
+decode_neg 2UzHM
+decode_neg zzzzz
+decode_neg 7YXq9H
+decode_neg zzzzzz
+decode_neg VtB5VXd
+decode_neg zzzzzzz
+decode_neg 3CUsUpv9u
+decode_neg zzzzzzzzz
+decode_neg Ahg1opVcGX
+decode_neg zzzzzzzzzz
+decode_neg jpXCZedGfVR
+decode_neg zzzzzzzzzzz
+decode_neg 123456789AB5R
+decode_neg 123456789ABzz
+decode_neg 123456789ABLUw
+decode_neg 123456789ABzzz
+decode_neg 123456789AB2UzHM
+decode_neg 123456789ABzzzzz
+decode_neg 123456789AB7YXq9H
+decode_neg 123456789ABzzzzzz
+decode_neg 123456789ABVtB5VXd
+decode_neg 123456789ABzzzzzzz
+decode_neg 123456789AB3CUsUpv9u
+decode_neg 123456789ABzzzzzzzzz
+decode_neg 123456789ABAhg1opVcGX
+decode_neg 123456789ABzzzzzzzzzz
+decode_neg 123456789ABjpXCZedGfVR
+decode_neg 123456789ABzzzzzzzzzzz
+decode_neg zzzzzzzzzzz11
+decode_neg 10
+decode_neg 11I
+decode_neg 11O11
+decode_neg 11l111
+decode_neg 11_11111111
+decode_neg 1101111111111
+decode_neg 11I11111111111111
+decode_neg 11O1111111111111111111
+decode_neg 1111111111110
+decode_neg 111111111111l1111
+decode_neg 111111111111_111111111
+addr 6 00000000000000000000000000000000 00000000000000000000000000000000 00000000000000000000000000000000 00000000000000000000000000000000 21D35quxec71111111111111111111111111111111111111111111111111111111111111111111111111111116Q5tCH
+addr 6 ffffffffffffffffffffffffffffffff ffffffffffffffffffffffffffffffff ffffffffffffffffffffffffffffffff ffffffffffffffffffffffffffffffff 2Aui6ejTFscjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQVqegMoV
+addr 0 00112233445566778899aabbccddeeff 00112233445566778899aabbccddeeff 00112233445566778899aabbccddeeff 00112233445566778899aabbccddeeff 1119XrkPuSmLzdHXgVgrZKjepg5hZAxffLzdHXgVgrZKjepg5hZAxffLzdHXgVgrZKjepg5hZAxffLzdHXgVgrZKVphZRvn
+addr 0 00000000000000000000000000000000 00000000000000000000000000000000 00000000000000000000000000000000 00000000000000000000000000000000 111111111111111111111111111111111111111111111111111111111111111111111111111111111111111115TXfiA
+addr 0x1122334455667788 00000000000000000000000000000000 00000000000000000000000000000000 00000000000000000000000000000000 00000000000000000000000000000000 PuT7GAdgbA83qvSEivPLYo11111111111111111111111111111111111111111111111111111111111111111111111111111169tWrH
+addr 0x1122334455667788 ffffffffffffffffffffffffffffffff ffffffffffffffffffffffffffffffff ffffffffffffffffffffffffffffffff ffffffffffffffffffffffffffffffff PuT7GAdgbA841d7FXjswpJjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQjpXCZedGfVQVq4LL1v
+addr 0x1122334455667788 11 PuT7GAdgbA819VwdWVDP
+addr 0x1122334455667788 2222 PuT7GAdgbA81efAfdCjPg
+addr 0x1122334455667788 333333 PuT7GAdgbA83sryEt3YC8Q
+addr 0x1122334455667788 44444444 PuT7GAdgbA83tWUuc54PFP3b
+addr 0x1122334455667788 5555555555 PuT7GAdgbA83u9zaKrtRKZ1J6
+addr 0x1122334455667788 666666666666 PuT7GAdgbA83uoWF3eanGG1aRoG
+addr 0x1122334455667788 77777777777777 PuT7GAdgbA83vT1umSHMYJ4oNVdu
+addr 0x1122334455667788 8888888888888888 PuT7GAdgbA83w6XaVDyvpoGQBEWbB
+addr 0x1122334455667788 999999999999999999 PuT7GAdgbA83wk3FD1gW7J2KVGofA1r
+addr 0 - 15p2yAV
+addr 0x7F - FNQ3D6A
+addr 0x80 - 26k9QWweu
+addr 0xFF - 3BzAD7n3y
+addr 0 11223344556677 11efCaY6UjG7JrxuB
+addr 6 11223344556677 21rhHRT48LN4PriP9
+addr_neg zuT7GAdgbA819VwdWVDP
+addr_neg 0uT7GAdgbA819VwdWVDP
+addr_neg IuT7GAdgbA819VwdWVDP
+addr_neg OuT7GAdgbA819VwdWVDP
+addr_neg luT7GAdgbA819VwdWVDP
+addr_neg PuT7GAdgbA819VwdWVD
+addr_neg 11efCaY6UjG7JrxuC
+addr_neg jerj2e4mESo
+addr_neg 1
+addr_neg 1111
+addr_neg 11
+addr_neg 111
+addr_neg 11111
+addr_neg 111111
+addr_neg 999999
+addr_neg ZZZZZZ

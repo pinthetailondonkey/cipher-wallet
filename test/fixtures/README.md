@@ -77,6 +77,44 @@ derivable from the recorded values. `hash_to_point` was left out as well: it
 tests a different function (unbiased, blake2b-based) that this wallet does not
 use. The key-image path uses `biased_hash_to_ec`, which is here.
 
+## monero-base58.txt
+
+Monero's own base58 and address vectors, from
+
+    https://raw.githubusercontent.com/monero-project/monero/3fd0f88c20f559839cafb20911cb13cb45eba7bd/tests/unit_tests/base58.cpp
+
+Pinned to the same commit as the crypto vectors. Source file sha256:
+
+    75c446818fc1c4be2906722de3b86cc1 52f2e80e4b33dcf660d1c9055be268b7
+
+This fixture's own sha256:
+
+    53f4fd76d066da6d837cb861cda7f06b fc354386571cf337e97c9438b59c0b16
+
+**Two transformations, both visible.** Each `TEST_...` line in that C++ file is
+one row here, whitespace-separated, hex in lower case, in this shape:
+
+    encode_block <data> <string>
+    encode       <data> <string>
+    decode_pos   <string> <data>
+    decode_neg   <string>
+    addr         <tag> <data> <address>
+    addr_neg     <address>
+
+201 rows: 29 block encodings, 17 string encodings, 33 decodes, 85 refusals
+(56 string-level plus 29 block-level), 21 address round-trips and 16 address
+refusals. Hex payloads of 64 characters or more get a space every 32
+characters — the same space-after-character-32 rule as above, repeated — and an
+empty payload is written `-`. Without it a 128-character payload would contain
+bare 64-character runs, which is exactly what the scanner refuses.
+
+One vector in the source is not here: `decode_fails_due_invalid_char_00`, which
+embeds a NUL byte in the address. A text fixture cannot carry it, so it is
+stated as missing rather than quietly omitted. Nothing else is cut.
+
+The tag column keeps the source's own spelling, so `0x1122334455667788` appears
+as that rather than as decimal.
+
 **This is settled policy, not a workaround.** The founder ruled on 2026-10-29:
 the hook is never edited and no fixtures exception is ever added, so the space
 after character 32 is the standing way to keep a published test vector in the

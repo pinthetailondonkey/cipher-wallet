@@ -330,6 +330,28 @@ export function varint(value) {
   return Uint8Array.from(out);
 }
 
+// The reading half. Bounded at ten bytes, as Monero's own reader is, so a run
+// of bytes with the continuation bit set cannot spin the loop forever.
+export function readVarint(bytes, offset = 0) {
+  if (!(bytes instanceof Uint8Array)) throw new Error('A varint is read from bytes.');
+  let value = 0n;
+  let shift = 0n;
+  for (let i = offset; i < bytes.length; i += 1) {
+    const byte = bytes[i];
+    value |= BigInt(byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) {
+      // Monero refuses a multi-byte varint whose last byte is zero: the same
+      // number has a shorter form, and accepting both would let one value be
+      // written two ways. An address prefix is read through this rule.
+      if (i > offset && byte === 0) throw new Error('That varint is not the shortest form of that number.');
+      return { value, length: i - offset + 1 };
+    }
+    shift += 7n;
+    if (shift > 63n) throw new Error('That varint is longer than ten bytes.');
+  }
+  throw new Error('That varint stops in the middle of a number.');
+}
+
 function concat(arrays) {
   const total = arrays.reduce((n, a) => n + a.length, 0);
   const out = new Uint8Array(total);
