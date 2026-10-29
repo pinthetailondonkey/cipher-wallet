@@ -49,9 +49,12 @@ into one whole Monero wallet — its own spend and view keys and a standard
 address — with the derivation frozen and its first three addresses pinned by a
 test. The matching rule for spotting an output that is ours is built
 (`src/monero/scan.js`) and tested against locally built transactions. What is
-not built: fetching blocks and scanning real ones, decrypting RingCT amounts,
-and anything that spends or broadcasts. Nothing on the Monero side has
-been funded or touched mainnet.
+not built: reading real Monero blocks from a node, decrypting RingCT amounts,
+and anything that spends or broadcasts. Nothing on the Monero side has been
+funded or touched mainnet. The transport for reading blocks is ruled: a declared
+Cipher node address (`CIPHER_XMR_NODE`), never a hardcoded public node and never
+a silent fallback — unset means the Monero rail refuses out loud and Bitcoin
+carries on.
 
 ## The vault is two layers
 
@@ -143,6 +146,13 @@ What this still does not do: it verifies a body against its header, not the
 chain's proof of work. A header's own work is not checked here, so a peer that
 mines a private header (or is handed one) can build a self-consistent block, and
 a short private chain of such blocks links and hashes cleanly.
+
+On the plan, named so it is not forgotten rather than discovered: header-first
+walking. Fetch the block headers and the filter headers, check the linkage, and
+download a body only when its filter matched — the BIP-157 shape, and what makes
+the filters save bandwidth. Until it lands, every block on a walk is downloaded
+and verified, and the cost of not having it is full-block bandwidth on every
+walk. `src/blockScan.js` is where it attaches.
 
 Where that bites is specific, and worth naming rather than hedging: a filter
 lookup asks about a block hash the wallet already has, and the header must hash
