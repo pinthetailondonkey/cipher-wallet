@@ -11,6 +11,11 @@
 //     because the point of this wallet is that the peer does not learn an IP;
 //   - filter data is accepted only when two independent peers agree, so one
 //     lying peer cannot hide a payment or invent one;
+//   - agreement is anchored on the first peer that answers, then checked
+//     against one more. That is fail-closed — a liar cannot fabricate a filter
+//     and an answer nobody seconds is refused — but it is not Sybil-proof: a
+//     compromised peer asked first can force a refusal, and it cannot force a
+//     false answer. Rotating the pool spreads that risk; it does not remove it;
 //   - a broadcast counts when any peer takes it, and being taken is not being
 //     mined. Nothing here says a transaction is paid.
 //
