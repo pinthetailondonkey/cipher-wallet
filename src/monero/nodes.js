@@ -36,19 +36,38 @@ export const PUBLIC_NODES = Object.freeze([
   // e.g. 'node.example.onion:18081' — added by hand, never discovered.
 ]);
 
-function clean(address) {
-  const text = String(address ?? '').trim();
+// The same two shapes the Bitcoin rail accepts, and the same refusal: an
+// address that is not a name, a port outside 1..65535, and — the one that
+// matters — a host reachable without Tor unless someone said clearnet is
+// allowed. docs/L3-RECEIVE.md states that rule for the whole lane, and a door
+// that quietly excepted itself from it would make the document false.
+const ONION = /^[a-z2-7]{16,56}\.onion$/;
+const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+function clean(address, { allowClearnet } = {}) {
+  const text = String(address ?? '').trim().toLowerCase().replace(/\.$/, '');
   if (!text) return '';
-  if (!/^[a-z0-9.-]+(\.onion)?:\d{1,5}$/i.test(text)) {
-    throw new Error(`That is not a node address: ${text}. An address is host:port.`);
+  const at = text.lastIndexOf(':');
+  const written = at === -1 ? '' : text.slice(at + 1);
+  const port = Number(written);
+  if (at === -1 || !/^\d{1,5}$/.test(written) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`That is not a node address: ${text}. An address is host:port, port 1 to 65535.`);
   }
-  return text;
+  const host = text.slice(0, at);
+  const onion = ONION.test(host);
+  if (!onion && !HOSTNAME.test(host)) throw new Error(`That is not a node host: ${host}.`);
+  if (!onion && !allowClearnet) {
+    throw new Error('A Monero node reachable without Tor would learn where you are. Use an .onion node, or say clearnet is allowed.');
+  }
+  return `${host}:${port}`;
 }
 
 // A pool is the list plus the override, and a sticky choice inside it.
-export function createNodePool({ nodes = PUBLIC_NODES, override = '' } = {}) {
-  const chosen = clean(override);
-  const list = chosen ? [chosen] : (Array.isArray(nodes) ? nodes : []).map(clean).filter(Boolean);
+export function createNodePool({ nodes = PUBLIC_NODES, override = '', allowClearnet = false } = {}) {
+  const chosen = clean(override, { allowClearnet });
+  const list = chosen
+    ? [chosen]
+    : (Array.isArray(nodes) ? nodes : []).map((node) => clean(node, { allowClearnet })).filter(Boolean);
   if (list.length === 0) {
     throw new Error('No Monero node is configured on this wallet, so the Monero rail cannot read the chain. Bitcoin is unaffected.');
   }
