@@ -13,7 +13,7 @@
 // to decide what this wallet believes.
 
 import { hex } from '@scure/base';
-import { readVarint, sha256d } from './tx.js';
+import { readVarint, reverseBytes, sha256d } from './tx.js';
 
 export const MAGIC = Object.freeze({
   mainnet: 'f9beb4d9',
@@ -32,6 +32,20 @@ function magicFor(network) {
   const magic = MAGIC[String(network ?? 'mainnet').toLowerCase()];
   if (!magic) throw new Error('That is not a Bitcoin network.');
   return hex.decode(magic);
+}
+
+// Hashes on the wire are in internal (little-endian) order; the display order a
+// person and a peer write them in is the reverse. Every 32-byte hash that
+// crosses this boundary is converted here, once, so a message built from a
+// display hash is correct on the wire.
+function wireHash(text) {
+  const display = hex.decode(String(text ?? ''));
+  if (display.length !== 32) throw new Error('A hash is 32 bytes.');
+  return reverseBytes(display);
+}
+
+function displayHash(bytes) {
+  return hex.encode(reverseBytes(bytes));
 }
 
 function commandBytes(command) {
@@ -103,8 +117,7 @@ export function decodeFrame(bytes, { network = 'mainnet', offset = 0 } = {}) {
 // getcfilters: filter type, start height (little-endian), stop block hash.
 export function encodeGetCfilters({ startHeight, stopHash, filterType = BASIC_FILTER_TYPE } = {}) {
   if (!Number.isInteger(startHeight) || startHeight < 0) throw new Error('A start height is a whole number from zero.');
-  const hash = hex.decode(String(stopHash ?? ''));
-  if (hash.length !== 32) throw new Error('A stop hash is 32 bytes.');
+  const hash = wireHash(stopHash);
   const out = new Uint8Array(1 + 4 + 32);
   out[0] = filterType;
   out[1] = startHeight & 0xff;
@@ -120,7 +133,7 @@ export function decodeGetCfilters(payload) {
     throw new Error('A getcfilters message is 37 bytes.');
   }
   const startHeight = payload[1] | (payload[2] << 8) | (payload[3] << 16) | (payload[4] << 24);
-  return { filterType: payload[0], startHeight, stopHash: hex.encode(payload.slice(5, 37)) };
+  return { filterType: payload[0], startHeight, stopHash: displayHash(payload.slice(5, 37)) };
 }
 
 // cfilter: filter type, the block hash it answers for, then the filter as a
@@ -128,8 +141,7 @@ export function decodeGetCfilters(payload) {
 // answer about a block it did not ask for.
 export function encodeCfilter({ blockHash, filter, filterType = BASIC_FILTER_TYPE } = {}) {
   if (!(filter instanceof Uint8Array) || filter.length === 0) throw new Error('A filter is bytes.');
-  const hash = hex.decode(String(blockHash ?? ''));
-  if (hash.length !== 32) throw new Error('A block hash is 32 bytes.');
+  const hash = wireHash(blockHash);
   const size = encodeCompactSize(filter.length);
   const out = new Uint8Array(1 + 32 + size.length + filter.length);
   out[0] = filterType;
@@ -150,7 +162,7 @@ export function decodeCfilter(payload) {
   }
   return {
     filterType: payload[0],
-    blockHash: hex.encode(payload.slice(1, 33)),
+    blockHash: displayHash(payload.slice(1, 33)),
     filter: payload.slice(at),
   };
 }
@@ -256,8 +268,7 @@ export function decodeVersion(payload) {
 // getdata: a count, then (type, hash) pairs. One block at a time is all this
 // wallet asks for.
 export function encodeGetData({ type = MSG_WITNESS_BLOCK, hash } = {}) {
-  const blockHash = hex.decode(String(hash ?? ''));
-  if (blockHash.length !== 32) throw new Error('A block hash is 32 bytes.');
+  const blockHash = wireHash(hash);
   const out = new Uint8Array(1 + 4 + 32);
   out[0] = 1;
   out[1] = type & 0xff;
@@ -274,7 +285,7 @@ export function decodeGetData(payload) {
   if (payload.length - count.offset !== 36) throw new Error('A getdata message is one type and one hash.');
   const type = payload[count.offset] | (payload[count.offset + 1] << 8)
     | (payload[count.offset + 2] << 16) | (payload[count.offset + 3] << 24);
-  return { type, hash: hex.encode(payload.slice(count.offset + 4)) };
+  return { type, hash: displayHash(payload.slice(count.offset + 4)) };
 }
 
 export { MAGIC_BYTES };
