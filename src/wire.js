@@ -201,6 +201,13 @@ export function encodeCompactSize(value) {
 export const PROTOCOL_VERSION = 70016;
 export const MSG_WITNESS_BLOCK = 0x40000002;
 
+// The two service bits this wallet needs a peer to claim. NODE_NETWORK is
+// "serves the full chain"; NODE_COMPACT_FILTERS (BIP-157) is "serves compact
+// filters". A peer that does not claim the second is not refusing us later — it
+// answers getcfilters with nothing, or with something else entirely.
+export const NODE_NETWORK = 1n;
+export const NODE_COMPACT_FILTERS = 64n;
+
 function u64le(value) {
   const out = new Uint8Array(8);
   let n = BigInt(value);

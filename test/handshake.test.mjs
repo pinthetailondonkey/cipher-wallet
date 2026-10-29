@@ -125,6 +125,19 @@ test('a second version is refused', async () => {
   }
 });
 
+test('a peer that never claimed compact filters is not asked for one', async () => {
+  // services 1 = NODE_NETWORK only. A full node that predates BIP-157, or one
+  // that switched the feature off, is a peer that cannot answer — and asking
+  // anyway spends the timeout and then reads as a wallet fault.
+  const peer = await startPeer([['version', encodeVersion({ nonce: 7n, services: 1n })], ['verack', new Uint8Array()]]);
+  try {
+    await assert.rejects(client().fetchFilter(peer, BLOCK), /does not say it serves compact filters/);
+    console.log('[handshake] unadvertised filter service refused');
+  } finally {
+    await peer.close();
+  }
+});
+
 test('a peer too old for filters is refused before anything is asked of it', async () => {
   const peer = await startPeer([['version', encodeVersion({ nonce: 7n, version: 70014, services: SERVICES })]]);
   try {

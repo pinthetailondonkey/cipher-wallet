@@ -18,6 +18,7 @@ import {
   BASIC_FILTER_TYPE,
   FRAME_HEADER_SIZE,
   MAX_PAYLOAD,
+  NODE_COMPACT_FILTERS,
   PROTOCOL_VERSION,
   decodeCfilter,
   decodeFrame,
@@ -186,6 +187,12 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
   async function fetchFilter(peer, blockHash) {
     const asked = normalizeHash(blockHash);
     return withSession(peer, async (session) => {
+      // A peer that never claimed to serve compact filters is refused before a
+      // question is asked of it. Asking anyway gets silence or an unrelated
+      // answer, and both look like a broken wallet rather than a wrong peer.
+      if ((session.remote.services & NODE_COMPACT_FILTERS) === 0n) {
+        throw new Error('That peer does not say it serves compact filters, so it is not asked.');
+      }
       session.send('getcfilters', encodeGetCfilters({ startHeight: 0, stopHash: asked }));
       for (;;) {
         const message = await session.nextAnswer();
