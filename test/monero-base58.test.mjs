@@ -36,6 +36,10 @@ function readRows() {
       row.tag = BigInt(rest[0]);
       row.address = rest.at(-1);
       row.data = unhex(rest.slice(1, -1).join(''));
+    } else if (command === 'keys_addr') {
+      // One real account key pair and its address; test/monero-address.test.mjs
+      // is what uses it.
+      continue;
     } else {
       throw new Error(`unknown row in the base58 fixture: ${command}`);
     }

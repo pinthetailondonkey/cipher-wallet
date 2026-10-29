@@ -89,7 +89,7 @@ Pinned to the same commit as the crypto vectors. Source file sha256:
 
 This fixture's own sha256:
 
-    53f4fd76d066da6d837cb861cda7f06b fc354386571cf337e97c9438b59c0b16
+    644f401b82ccbe995eabb4f9d32031f8 da8949544631fe4df8eec8f5e77cc67b
 
 **Two transformations, both visible.** Each `TEST_...` line in that C++ file is
 one row here, whitespace-separated, hex in lower case, in this shape:
@@ -100,10 +100,13 @@ one row here, whitespace-separated, hex in lower case, in this shape:
     decode_neg   <string>
     addr         <tag> <data> <address>
     addr_neg     <address>
+    keys_addr    <spend and view keys> <address>
 
-201 rows: 29 block encodings, 17 string encodings, 33 decodes, 85 refusals
-(56 string-level plus 29 block-level), 21 address round-trips and 16 address
-refusals. Hex payloads of 64 characters or more get a space every 32
+202 rows: 29 block encodings, 17 string encodings, 33 decodes, 85 refusals
+(56 string-level plus 29 block-level), 21 address round-trips, 16 address
+refusals, and one real account key pair with the address Monero makes from it.
+That last row is the only one that pins an address to keys rather than to
+itself. Hex payloads of 64 characters or more get a space every 32
 characters — the same space-after-character-32 rule as above, repeated — and an
 empty payload is written `-`. Without it a 128-character payload would contain
 bare 64-character runs, which is exactly what the scanner refuses.

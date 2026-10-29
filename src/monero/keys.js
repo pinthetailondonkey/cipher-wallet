@@ -156,6 +156,22 @@ export function decodePoint(bytes) {
   }
 }
 
+// Monero's check_key, in full: a public key is a curve point, it is not the
+// identity, and it lies in the prime-order subgroup. A point with a torsion
+// component is a valid curve point and still not a key — Monero refuses an
+// address that names one, and so does this. l*P is the identity exactly when P
+// has no torsion, which is why the check is that multiplication and not a
+// cofactor multiply.
+export function isValidPublicKey(bytes) {
+  try {
+    const point = decodePoint(bytes);
+    if (point.is0()) return false;
+    return point.multiplyUnsafe(GROUP_ORDER - 1n).add(point).is0();
+  } catch {
+    return false;
+  }
+}
+
 // ge_scalarmult_base. A zero secret is refused: Monero's own sc_check rejects
 // it, and a zero key would produce the identity, which is not a key.
 export function secretToPublic(secret) {
