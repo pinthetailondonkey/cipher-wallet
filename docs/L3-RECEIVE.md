@@ -50,10 +50,17 @@ once. Detection is per pocket, on the device:
 
 1. Ask peers for block data in order. A peer serves blocks; it is not told which
    pockets exist, which transactions matter, or that this device is a wallet.
-2. For each transaction output, for each pocket being scanned, compute the
-   one-time key from that pocket's view key and compare it with the pocket's
-   spend public key. This is Monero's own output-scanning rule; the output is
-   ours when the comparison matches.
+2. For each transaction output, for each pocket being scanned, build Monero's
+   shared derivation from the pocket's view key and the transaction's public
+   key, rebuild the output's one-time key from that derivation, the output index
+   and the pocket's spend public key, and compare **that** with the output's own
+   one-time key. The comparison target is the output's key, not the pocket's
+   spend public key: the spend public key is the base the address is built on,
+   and an output's key is never equal to it. This is Monero's own
+   output-scanning rule; the output is ours when the comparison matches.
+   Implemented the other way round the scan matches nothing, and every payment
+   reads as never received — the silent-zero class the pinned-address test
+   exists to catch.
 3. A matched output is a **seen** payment. As with Bitcoin, a peer having the
    bytes is not the money; the confirmation count comes from the chain height
    the same peer reports, and the states stay separate: seen, then confirmed.
