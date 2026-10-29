@@ -48,13 +48,19 @@ to Monero's own generated vectors, and `src/monero/pocket.js` turns one pocket
 into one whole Monero wallet — its own spend and view keys and a standard
 address — with the derivation frozen and its first three addresses pinned by a
 test. The matching rule for spotting an output that is ours is built
-(`src/monero/scan.js`) and tested against locally built transactions. What is
-not built: reading real Monero blocks from a node, decrypting RingCT amounts,
-and anything that spends or broadcasts. Nothing on the Monero side has been
-funded or touched mainnet. The transport for reading blocks is ruled: a declared
-Cipher node address (`CIPHER_XMR_NODE`), never a hardcoded public node and never
-a silent fallback — unset means the Monero rail refuses out loud and Bitcoin
-carries on.
+(`src/monero/scan.js`) and tested against locally built transactions. RingCT
+amounts now decrypt (`src/monero/ringct.js`), but they are pinned only to
+keccak's vectors and Monero's varint, not to a real transaction, so nothing may
+gate a payment on them yet. What is not built: reading real Monero blocks from a
+node, and anything that spends or broadcasts. Nothing on the Monero side has been
+funded or touched mainnet.
+
+The transport for reading blocks is ruled: a shipped list of public nodes in
+`src/monero/nodes.js`, with a private node overriding the list when
+`CIPHER_XMR_NODE` is set — one node per scan, sticky, and fail-closed, so a node
+that dies mid-scan refuses the scan rather than stitching two operators together.
+The list ships empty until the founder names addresses. Nothing reads the
+variable yet: the selection is built and tested, the reader is not.
 
 ## The vault is two layers
 

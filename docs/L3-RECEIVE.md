@@ -112,11 +112,20 @@ nothing about pockets it was never told about.
   is not built: fetching blocks, and scanning real ones. It is listed first
   because everything below depends on it.
 - **Amounts.** A matched output proves an output is ours, not how much it
-  carries. RingCT amounts have to be decrypted with the same derivation before a
-  payment can be shown as an amount, and that is the next piece of work.
+  carries. The decryption is written (`src/monero/ringct.js`: the one-time pad
+  is keccak of the derivation and the output's index), and it is pinned to
+  keccak's published vectors and to Monero's varint — and to no real
+  transaction, because there is none in this repo to check it against. Until a
+  real amount is decoded and matches one the owner knows, it is arithmetic that
+  agrees with itself. It must not gate a payment.
 - **Spending.** Nothing here builds, signs or broadcasts a Monero transaction.
-  Key images, RingCT and CLSAG are unbuilt.
+  Key images and CLSAG are unbuilt.
 - **Restore.** The gap-limit scan is described, not implemented.
+- **Choosing a node.** The rule is built (`src/monero/nodes.js`): one node per
+  scan, sticky for the session, an exhausted list is a failed read and never a
+  statement about a payment. The list ships empty and nothing reads
+  `CIPHER_XMR_NODE` yet; `assertCurrent` has no caller until a transport is
+  wired to it.
 - **No wallet has been funded, and nothing has touched mainnet.** Passing
   vectors prove the arithmetic matches Monero's; they say nothing about safety
   once real money is involved.
