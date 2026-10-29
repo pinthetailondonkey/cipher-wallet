@@ -26,7 +26,10 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 // what the derived key becomes on that rail. Bitcoin is a secp256k1 key we
 // turn into a P2WPKH address. Monero has no BIP32 of its own, so the derived
 // 32 bytes are ENTROPY for Monero's own key set, reduced to an ed25519 scalar
-// in Phase 3 — this module does not pretend to emit a Monero address yet.
+// in Phase 3. This module stops there and deliberately does not import the
+// Monero side: src/monero/pocket.js builds the Monero wallet from
+// xmrPocketEntropy, so the dependency runs one way and the two key families
+// cannot be confused here.
 export const COINS = Object.freeze({
   btc: Object.freeze({ purpose: 84, coinType: 0, addressKind: 'p2wpkh' }),
   xmr: Object.freeze({ purpose: 44, coinType: 128, addressKind: 'ed25519-entropy' }),
