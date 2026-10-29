@@ -85,7 +85,7 @@ export async function walkBack({ fetchBlock, peer, tipHash, stopHash = null, max
       // the hash check above.
       throw new Error(`Block ${actual} does not connect to ${blockHash(previous)}.`);
     }
-    blocks.push({ hash: actual, bytes });
+    blocks.push({ hash: actual, bytes, body });
     await onBlock?.({ hash: actual, bytes, body });
     if (stop && actual === stop) return blocks;
     const parent = previousBlockHash(bytes);

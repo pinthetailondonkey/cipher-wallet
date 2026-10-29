@@ -14,7 +14,7 @@ import { blockHash } from '../src/chain.js';
 import { buildBasicFilter } from '../src/filters.js';
 import { scanBack } from '../src/blockScan.js';
 import { createPeerClient, decodeVersion, encodeVersion, frame } from '../src/peerClient.js';
-import { reverseBytes, serializeTx, sha256d, txid } from '../src/tx.js';
+import { parseTx, reverseBytes, serializeTx, sha256d, txid } from '../src/tx.js';
 import { decodeFrame, decodeGetData, encodeCfilter } from '../src/wire.js';
 
 const OUR_SCRIPT = Uint8Array.from([0x00, 0x14, ...new Uint8Array(20).fill(7)]);
@@ -25,12 +25,27 @@ const AMOUNT = 250000000n;
 // header that commits to that transaction's merkle root. Never mined, never
 // presented as mined; what it has is a body its own header verifies.
 function blockPaying(prevDigest, script, fill) {
-  const tx = {
+  return blockWithTx(prevDigest, fill, {
     version: 1,
     inputs: [{ txid: '00'.repeat(32), vout: 0xffffffff, scriptSig: Uint8Array.of(fill), sequence: 0xffffffff }],
     outputs: [{ value: AMOUNT, script }],
     lockTime: 0,
-  };
+  });
+}
+
+// A block whose one transaction SPENDS an output from an earlier block and pays
+// `script`. The filter will name the spent script as well as the paid one, which
+// is the honest reason a filter mentions a wallet it does not pay.
+function blockSpending(prevDigest, prevTxid, prevVout, script, fill) {
+  return blockWithTx(prevDigest, fill, {
+    version: 1,
+    inputs: [{ txid: prevTxid, vout: prevVout, scriptSig: Uint8Array.of(0xaa), sequence: 0xffffffff }],
+    outputs: [{ value: AMOUNT - 1000n, script }],
+    lockTime: 0,
+  });
+}
+
+function blockWithTx(prevDigest, fill, tx) {
   const header = new Uint8Array(80).fill(fill);
   header.set(prevDigest, 4);
   header.set(reverseBytes(hex.decode(txid(tx))), 36);
@@ -103,6 +118,12 @@ const TIP_HASH = blockHash(TIP);
 
 const filterFor = (hash, script) => buildBasicFilter({ blockHash: hash, outputScripts: [script] });
 
+// The single transaction id inside a one-transaction block.
+function txidOfBlock(bytes) {
+  const tx = parseTx(bytes, { offset: 81, exact: true });
+  return txid(tx);
+}
+
 function client() {
   return createPeerClient({ connect, timeoutMs: 2000 });
 }
@@ -147,6 +168,89 @@ test('a filter that names us over a block that does not pay us changes no belief
     assert.deepEqual(out.quiet.map((q) => q.hash), [TIP_HASH]);
     assert.deepEqual(out.payments.map((p) => p.blockHash), [PARENT_HASH]);
     witness('fabricated filter', 'reported quiet', 'no belief changed');
+  } finally {
+    await peer.close();
+  }
+});
+
+test('a filter that omits us hides nothing while the walk reads every body', async () => {
+  // F20, measured by AUDITOR: the filter is not a bandwidth saver in this build,
+  // so an omission must not change what is found. The parent's filter says
+  // nothing about our script, and the payment is still reported.
+  const peer = await startPeer({
+    blocks: { [TIP_HASH]: TIP, [PARENT_HASH]: PARENT },
+    filters: {
+      [TIP_HASH]: buildBasicFilter({ blockHash: TIP_HASH, outputScripts: [OTHER_SCRIPT] }),
+      [PARENT_HASH]: buildBasicFilter({ blockHash: PARENT_HASH, outputScripts: [OTHER_SCRIPT] }),
+    },
+  });
+  try {
+    const { fetchFilter, fetchBlock } = client();
+    const out = await scanBack({
+      fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
+      tipHash: TIP_HASH, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+    });
+    assert.equal(out.scanned, 2);
+    assert.deepEqual(out.quiet, []);
+    assert.deepEqual(out.payments.map((p) => p.blockHash), [PARENT_HASH]);
+    witness('omitted filter', `${out.payments.length} payment still found`, 'filter decides reporting only');
+  } finally {
+    await peer.close();
+  }
+});
+
+test('an honest spend of our own coin is not reported as a lying filter', async () => {
+  // F21, measured by AUDITOR: a basic filter names a script when the block
+  // SPENDS it. Here the tip spends the parent's coinbase that paid us and pays
+  // someone else, so its filter truthfully names our script — and the scan must
+  // say "spent", not "the filter lied".
+  const spentTip = blockSpending(sha256d(PARENT.slice(0, 80)), txidOfBlock(PARENT), 0, OTHER_SCRIPT, 9);
+  const spentTipHash = blockHash(spentTip);
+  const peer = await startPeer({
+    blocks: { [spentTipHash]: spentTip, [PARENT_HASH]: PARENT },
+    filters: {
+      [spentTipHash]: buildBasicFilter({ blockHash: spentTipHash, outputScripts: [OTHER_SCRIPT], prevScripts: [OUR_SCRIPT] }),
+      [PARENT_HASH]: buildBasicFilter({ blockHash: PARENT_HASH, outputScripts: [OUR_SCRIPT] }),
+    },
+  });
+  try {
+    const { fetchFilter, fetchBlock } = client();
+    const out = await scanBack({
+      fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
+      tipHash: spentTipHash, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+    });
+    assert.deepEqual(out.quiet, [], 'a spend is not a lie');
+    assert.equal(out.spent.length, 1);
+    assert.equal(out.spent[0].blockHash, spentTipHash);
+    assert.equal(out.spent[0].prevTxid, txidOfBlock(PARENT));
+    assert.equal(out.spent[0].value, AMOUNT);
+    assert.deepEqual(out.payments.map((p) => p.blockHash), [PARENT_HASH]);
+    assert.equal(out.unresolved, 0);
+    witness('honest spend', `spent ${out.spent.length}`, 'quiet 0');
+  } finally {
+    await peer.close();
+  }
+});
+
+test('a spend whose prevout is outside the walk suppresses the lying-filter verdict', async () => {
+  // The filter names our script; the block spends something this walk never saw.
+  // That could be an honest spend of older money, so the scan must not call it a
+  // lie — it reports the input as unresolved and says nothing.
+  const orphanSpend = blockSpending(new Uint8Array(32), 'ab'.repeat(32), 0, OTHER_SCRIPT, 6);
+  const orphanHash = blockHash(orphanSpend);
+  const peer = await startPeer({
+    blocks: { [orphanHash]: orphanSpend },
+    filters: { [orphanHash]: buildBasicFilter({ blockHash: orphanHash, outputScripts: [OTHER_SCRIPT], prevScripts: [OUR_SCRIPT] }) },
+  });
+  try {
+    const { fetchFilter, fetchBlock } = client();
+    const out = await scanBack({
+      fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
+      tipHash: orphanHash, scripts: [OUR_SCRIPT],
+    });
+    assert.deepEqual(out.quiet, [], 'cannot tell a lie from an older spend');
+    assert.equal(out.unresolved, 1);
+    witness('unresolved spend', `unresolved ${out.unresolved}`, 'no verdict');
   } finally {
     await peer.close();
   }
