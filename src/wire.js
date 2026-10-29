@@ -117,7 +117,13 @@ export function decodeFrame(bytes, { network = 'mainnet', offset = 0 } = {}) {
 
 // getcfilters: filter type, start height (little-endian), stop block hash.
 export function encodeGetCfilters({ startHeight, stopHash, filterType = BASIC_FILTER_TYPE } = {}) {
-  if (!Number.isInteger(startHeight) || startHeight < 0) throw new Error('A start height is a whole number from zero.');
+  // Four bytes hold 0..4294967295, and a height above that does not fit: it
+  // would be written as its low four bytes, so 2^32 becomes 0 — the genesis
+  // range, which is the question this wallet stopped asking on purpose. The
+  // bound sits here rather than at a caller because the value is produced HERE.
+  if (!Number.isInteger(startHeight) || startHeight < 0 || startHeight > 0xffffffff) {
+    throw new Error('A start height is a whole number from 0 to 4294967295.');
+  }
   const hash = wireHash(stopHash);
   const out = new Uint8Array(1 + 4 + 32);
   out[0] = filterType;
@@ -133,7 +139,10 @@ export function decodeGetCfilters(payload) {
   if (!(payload instanceof Uint8Array) || payload.length !== 37) {
     throw new Error('A getcfilters message is 37 bytes.');
   }
-  const startHeight = payload[1] | (payload[2] << 8) | (payload[3] << 16) | (payload[4] << 24);
+  // Unsigned. A height has no sign, and the signed shifts read 0xffffffff as
+  // -1 — a value our own encoder could produce before it was bounded, and one a
+  // peer can still send.
+  const startHeight = (payload[1] | (payload[2] << 8) | (payload[3] << 16) | (payload[4] << 24)) >>> 0;
   return { filterType: payload[0], startHeight, stopHash: displayHash(payload.slice(5, 37)) };
 }
 

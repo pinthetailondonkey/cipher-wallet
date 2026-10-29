@@ -125,6 +125,19 @@ test('a second version is refused', async () => {
   }
 });
 
+test('a height that does not fit four bytes is refused before a socket is opened', async () => {
+  // 2^32 would be written as its low four bytes, which are zero — the genesis
+  // range. Bounded here as well as in the encoder, so the caller that computes
+  // a height rather than receiving one cannot reach the wire with it.
+  let opened = 0;
+  const once = async (_peer) => { opened += 1; return { write() {}, end() {}, onData() {}, onClose() {} }; };
+  const bare = createPeerClient({ connect: once, timeoutMs: 500 });
+  await assert.rejects(bare.fetchFilter({}, BLOCK, { startHeight: 2 ** 32 }), /by the height/);
+  await assert.rejects(bare.fetchFilter({}, BLOCK, { startHeight: -1 }), /by the height/);
+  assert.equal(opened, 0, 'no peer is dialled with a height that cannot be written');
+  console.log('[handshake] unwritable height refused before dialling');
+});
+
 test('a filter question without the block height is refused before it is sent', async () => {
   // getcfilters is a range question: start height to stop hash. Asked with
   // zero, a real node streams every filter from genesis and the first one

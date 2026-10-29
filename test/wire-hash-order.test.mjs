@@ -114,3 +114,23 @@ test('a hash written in the wrong order does not survive a round trip', () => {
   // Not hex at all is refused by the decoder, not by the length check.
   assert.throws(() => encodeCfilter({ blockHash: 'zz'.repeat(32), filter: Uint8Array.of(1) }), /Unknown letter/);
 });
+
+// AUDITOR's F25, and ADJUDICATOR's sharpening: the height field is four bytes,
+// so 2^32 masks to zero — and zero is the genesis-range question this round's
+// fix existed to remove. Same defect one boundary up. The bound belongs on the
+// wire pair, because our own encoder at 2^31 makes the decoder go negative and
+// a check at the call site would leave the two disagreeing.
+test('a start height has one width, and both ends of the wire agree on it', () => {
+  const stop = PARENT_DISPLAY;
+  assert.throws(() => encodeGetCfilters({ startHeight: 2 ** 32, stopHash: stop }), /height/);
+  assert.throws(() => encodeGetCfilters({ startHeight: -1, stopHash: stop }), /whole number/);
+  // The top of the field survives both directions unchanged. It did not before:
+  // the decoder read the four bytes signed, so 0xffffffff came back as -1.
+  const top = encodeGetCfilters({ startHeight: 0xffffffff, stopHash: stop });
+  assert.equal(hex.encode(top.slice(1, 5)), 'ffffffff');
+  assert.equal(decodeGetCfilters(top).startHeight, 0xffffffff, 'an unsigned read, because a height has no sign');
+  // And a peer's own bytes are read the same way, not only our own.
+  const fromPeer = new Uint8Array([0x00, 0xff, 0xff, 0xff, 0xff, ...top.slice(5)]);
+  assert.equal(decodeGetCfilters(fromPeer).startHeight, 0xffffffff);
+  console.log(`[wire] height field: 0..${0xffffffff}, unsigned both ways`);
+});

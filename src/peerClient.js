@@ -192,7 +192,7 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
     // nobody asked about. The height of the block being asked for is the only
     // honest start, so a caller that does not know it is refused here rather
     // than flooding a peer and misreading the first answer.
-    if (!Number.isInteger(startHeight) || startHeight < 0) {
+    if (!Number.isInteger(startHeight) || startHeight < 0 || startHeight > 0xffffffff) {
       throw new Error('A filter is asked for by the height of the block it belongs to.');
     }
     return withSession(peer, async (session) => {
