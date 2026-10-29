@@ -118,6 +118,28 @@ test('a PSBT asking for a sighash type this build does not honour is refused', (
   }
 });
 
+test('signing signs witness v0 pay-to-public-key-hash and no other script shape', () => {
+  // Each script carries our own key hash from byte 2, so the belongs-to-key
+  // check below the shape guard does not catch them. Only the shape guard does.
+  // If it were relaxed to "any non-empty script", the OP_RETURN shape would be
+  // signed — a signature over a script nobody named.
+  const keyHash = p2wpkhScriptFor(POCKET.publicKey).slice(2);
+  const shapes = {
+    'an OP_RETURN-shaped script': new Uint8Array([0x6a, 0x14, ...keyHash]),
+    'a pay-to-public-key-hash script': new Uint8Array([0x76, 0xa9, 0x14, ...keyHash, 0x88, 0xac]),
+  };
+  for (const [name, script] of Object.entries(shapes)) {
+    const psbt = buildPsbt();
+    psbt.inputs[0].witnessUtxo.script = script;
+    assert.throws(
+      () => signPsbt(psbt, { privateKey: POCKET.privateKey, publicKey: POCKET.publicKey }),
+      /witness v0 pay-to-public-key-hash/,
+      `${name} was signed`,
+    );
+    assert.equal(psbt.inputs[0].partialSigs.length, 0);
+  }
+});
+
 test('finalizing does not change the txid the unsigned transaction had', () => {
   const psbt = buildPsbt();
   const before = txid(psbt.tx);
