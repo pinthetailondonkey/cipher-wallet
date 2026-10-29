@@ -154,7 +154,16 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers, startH
 
   const good = answers.filter((answer) => answer.filter);
   const first = good[0];
-  if (!first) throw new Error('No peer answered with a filter.');
+  if (!first) {
+    // Every peer failed. If they all failed for the SAME reason, that reason is
+    // the answer: a missing argument on the calling side would otherwise be
+    // reported as a claim about the network, and a person would go looking at
+    // peers for a fault in their own call. Different reasons still get the
+    // round-up, because then no single one of them is the answer.
+    const reasons = new Set(answers.map((answer) => answer.error || 'no filter'));
+    if (answers.length > 0 && reasons.size === 1) throw new Error([...reasons][0]);
+    throw new Error('No peer answered with a filter.');
+  }
   const agreed = good.filter((answer) => sameBytes(answer.filter, first.filter));
   if (agreed.length < MIN_AGREEMENT) {
     const who = answers.map((a) => `${a.peer.host}:${a.peer.port}${a.error ? ` (${a.error})` : ''}`).join(', ');

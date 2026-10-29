@@ -165,3 +165,25 @@ test('an empty transaction is not broadcast', async () => {
   pool.add(A);
   await assert.rejects(broadcast(pool, async () => {}, new Uint8Array(0)), /nothing to broadcast/);
 });
+
+// AUDITOR's F27, reframed by ADJUDICATOR as claims-vs-code: a heightless
+// verifiedFilter opens no socket and then reports that no PEER answered. That
+// sentence is a claim about the network when the fault is the call site, and it
+// sends a person to look at peers for their own missing argument. When every
+// peer failed for the same reason, that reason is the answer.
+test('when every peer fails for one reason, the reason is what is reported', async () => {
+  const pool = createPeerPool();
+  pool.add(A); pool.add(B);
+  const cause = 'A filter is asked for by the height of the block it belongs to.';
+  await assert.rejects(
+    agreedFilter(pool, async () => { throw new Error(cause); }, 'ef'.repeat(32)),
+    (error) => error.message === cause,
+  );
+  // Different reasons still get the round-up, because then no single one is the
+  // answer and naming one would be picking a winner between peers.
+  await assert.rejects(
+    agreedFilter(pool, async (peer) => { throw new Error(peer.host.startsWith('a') ? 'timed out' : 'closed'); }, 'ef'.repeat(32)),
+    /No peer answered with a filter/,
+  );
+  console.log('[peers] a shared cause is reported instead of blaming the peers');
+});
