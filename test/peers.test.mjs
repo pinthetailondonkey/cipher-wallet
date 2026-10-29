@@ -67,7 +67,8 @@ test('two peers that agree are believed', async () => {
   const pool = createPeerPool();
   pool.add(A); pool.add(B);
   const filter = Uint8Array.of(1, 2, 3);
-  const out = await agreedFilter(pool, async () => ({ filter }));
+  const blockHash = 'ef'.repeat(32);
+  const out = await agreedFilter(pool, async (peer, asked) => ({ filter, blockHash: asked }), blockHash);
   assert.deepEqual([...out.filter], [1, 2, 3]);
   assert.equal(out.peers.length, 2);
 });
@@ -76,9 +77,10 @@ test('two peers that disagree move nothing', async () => {
   const pool = createPeerPool();
   const peers = [pool.add(A), pool.add(B)];
   await assert.rejects(
-    agreedFilter(pool, async (peer) => ({
+    agreedFilter(pool, async (peer, asked) => ({
       filter: peer.host.startsWith('a') ? Uint8Array.of(1, 2) : Uint8Array.of(9, 9),
-    }), 'x'.repeat(64), { peers }),
+      blockHash: asked,
+    }), '12'.repeat(32), { peers }),
     /did not agree/,
   );
 });
@@ -86,10 +88,10 @@ test('two peers that disagree move nothing', async () => {
 test('a peer that fails is replaced by a third one that agrees', async () => {
   const pool = createPeerPool();
   const peers = [pool.add(A), pool.add(B), pool.add(C)];
-  const out = await agreedFilter(pool, async (peer) => {
+  const out = await agreedFilter(pool, async (peer, asked) => {
     if (peer.host.startsWith('a')) throw new Error('connection refused');
-    return { filter: Uint8Array.of(7) };
-  }, 'x'.repeat(64), { peers });
+    return { filter: Uint8Array.of(7), blockHash: asked };
+  }, '12'.repeat(32), { peers });
   assert.deepEqual([...out.filter], [7]);
   assert.equal(out.peers.length, 2);
 });
@@ -98,10 +100,10 @@ test('with three peers configured, one dead peer does not stall the default path
   const pool = createPeerPool();
   pool.add(A); pool.add(B); pool.add(C);
   let called = 0;
-  const out = await agreedFilter(pool, async () => {
+  const out = await agreedFilter(pool, async (peer, asked) => {
     called += 1;
-    return { filter: Uint8Array.of(4) };
-  });
+    return { filter: Uint8Array.of(4), blockHash: asked };
+  }, 'ee'.repeat(32));
   assert.equal(called, 3, 'one more than the quorum is asked when a spare exists');
   assert.equal(out.peers.length, 3);
 });
@@ -110,9 +112,33 @@ test('a peer that answers with nothing is not counted', async () => {
   const pool = createPeerPool();
   const peers = [pool.add(A), pool.add(B)];
   await assert.rejects(
-    agreedFilter(pool, async (peer) => (peer.host.startsWith('a') ? null : { filter: Uint8Array.of(1) }), 'x'.repeat(64), { peers }),
+    agreedFilter(pool, async (peer, asked) => (peer.host.startsWith('a') ? null : { filter: Uint8Array.of(1), blockHash: asked }), '12'.repeat(32), { peers }),
     /did not agree/,
   );
+});
+
+test('an answer about a different block is not an answer', async () => {
+  // A peer may send a perfectly valid filter that belongs to another block.
+  // Comparing filter bytes alone would let two such answers "agree" on data
+  // that has nothing to do with the block we asked about — the wallet would
+  // then match our script against the wrong block's filter and move nothing, or
+  // worse, believe a block we never checked. The block hash echo is part of
+  // what makes an answer an answer.
+  const pool = createPeerPool();
+  const peers = [pool.add(A), pool.add(B)];
+  const asked = 'ab'.repeat(32);
+  const out = [];
+  await assert.rejects(
+    agreedFilter(pool, async (peer) => {
+      // One peer answers honestly and one answers about a different block; both
+      // with the same filter bytes, so only the hash can tell them apart.
+      const answer = { filter: Uint8Array.of(3, 1, 4), blockHash: peer.host.startsWith('a') ? asked : 'cd'.repeat(32) };
+      out.push(`${peer.host} answered about ${answer.blockHash}`);
+      return answer;
+    }, asked, { peers }),
+    /different block|did not name the block/,
+  );
+  assert.equal(out.length, 2, `both peers were asked; witnesses: ${out.join('; ')}`);
 });
 
 test('a broadcast counts when one peer takes it', async () => {

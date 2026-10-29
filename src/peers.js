@@ -115,6 +115,14 @@ export function createPeerPool({ allowClearnet = false } = {}) {
 // disagreement means one of them is lying and this wallet does not know which,
 // so nothing is believed and the caller is told which peers disagreed.
 export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {}) {
+  // The hash the question was about, in one spelling. An answer has to name it
+  // back: a valid filter from another block is not evidence about this block,
+  // and comparing filter bytes alone would let two such answers agree on data
+  // nobody asked for.
+  const askedHash = String(blockHash ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(askedHash)) {
+    throw new Error('An agreed filter needs the 32-byte block hash it is asking about.');
+  }
   pool.requireAgreement(MIN_AGREEMENT);
   // Ask one more than the quorum when one is available, so a single dead peer
   // does not stall the wallet when a spare is already configured.
@@ -127,13 +135,17 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {})
   for (const peer of asked) {
     let answer;
     try {
-      answer = await fetchFilter(peer, blockHash);
+      answer = await fetchFilter(peer, askedHash);
     } catch (error) {
       answers.push({ peer, error: error?.message || String(error) });
       continue;
     }
     if (!answer || !(answer.filter instanceof Uint8Array) || answer.filter.length === 0) {
       answers.push({ peer, error: 'no filter' });
+      continue;
+    }
+    if (String(answer.blockHash ?? '').trim().toLowerCase() !== askedHash) {
+      answers.push({ peer, error: 'answered about a different block' });
       continue;
     }
     answers.push({ peer, filter: answer.filter });
