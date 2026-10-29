@@ -246,18 +246,6 @@ export function matchesFilter(filterBytes, blockHash, script) {
   return false;
 }
 
-// Every script in a block whose filter says it is there, checked in the same
-// order the filter stores it. Used to answer "is any of mine in this block".
-export function matchesAny(filterBytes, blockHash, scripts) {
-  return scripts.filter((script) => {
-    try {
-      return matchesFilter(filterBytes, blockHash, script);
-    } catch {
-      return false;
-    }
-  });
-}
-
 // BIP-157 filter header: SHA256d(filter_hash || previous_header), with
 // filter_hash = SHA256(filter bytes) — single hash, then double.
 //
