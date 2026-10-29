@@ -70,6 +70,14 @@ a copied ciphertext has the PIN layer but not the key. Opening takes both. A
 device-key failure is a typed `DeviceKeyError` and is never told to the person
 as a wrong PIN.
 
+The header of `src/vault.js` names the Cipher commit it was ported from
+(`cipher/src/useIdentity.js @ ec6e98b`). That sha is a surname, not a parent:
+this repository is a separate product with its own history, it has copied one
+file by hand from Cipher, and it descends from nothing in that tree. A Cipher
+commit moving forward does not put this wallet behind it, and nothing here
+needs a rebase when Cipher moves. Nor does Cipher depend on this: the arrow
+runs one way, wallet ← Cipher, and it is a copy, not an import.
+
 ## The receive path
 
 `src/payHandle.js` issues a stable pointer (32 random bytes, never derived from
