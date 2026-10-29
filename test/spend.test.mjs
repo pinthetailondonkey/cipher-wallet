@@ -73,6 +73,21 @@ test('change sent to the payee is refused, not folded into an overpayment', () =
   );
 });
 
+test('the payee spelled another way is still the payee', () => {
+  // bech32 is case-insensitive: this is the same address written in upper case,
+  // and it decodes to the same script bytes. The guard compares the scripts, so
+  // it must refuse. An equality check on the two strings would let the payee
+  // receive its own change, which is the overpayment the guard exists to stop.
+  const shouted = PAY_TO.toUpperCase();
+  assert.notEqual(shouted, PAY_TO);
+  assert.throws(
+    () => buildSpend({
+      pocket: POCKET, utxo: utxoOf(100000n), to: PAY_TO, amount: 50000n, fee: 1000n, changeAddress: shouted,
+    }),
+    /change address is the payee/,
+  );
+});
+
 test('a normal spend to a separate change pocket is unaffected by that guard', () => {
   const { tx, change } = buildSpend({
     pocket: POCKET, utxo: utxoOf(100000n), to: PAY_TO, amount: 50000n, fee: 1000n, changeAddress: CHANGE_TO,
