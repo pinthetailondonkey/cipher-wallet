@@ -42,11 +42,27 @@ emit a Monero address yet.
 - `src/vault.js` is ported from the vault half of `cipher/src/useIdentity.js`:
   PBKDF2-SHA256 at 600,000 iterations, per-vault salt, AES-GCM-256.
 
-## Phase 0 limit, stated
+## The vault is two layers
 
-The vault here is the INNER vault only. Cipher wraps it in a device-key
-envelope; that envelope is Phase 1 and is not in this repo. Until it lands, a
-vault written here is not device-bound.
+The PIN vault (`src/vault.js`) is the inner layer. The device envelope
+(`src/deviceEnvelope.js`) wraps it under a key that only this device holds, so
+a copied ciphertext has the PIN layer but not the key. Opening takes both. A
+device-key failure is a typed `DeviceKeyError` and is never told to the person
+as a wrong PIN.
+
+## The receive path
+
+`src/payHandle.js` issues a stable pointer (32 random bytes, never derived from
+the root). `src/receive.js` resolves it to the next derived pocket, writes the
+pocket and the moved handle in one storage write, and asks the watcher about
+that one address. `src/pocketStore.js` keeps the table on disk so it survives a
+reload and a history re-fetch; a repeated report is a no-op, never a second
+pocket. `src/watcher.js` holds the transport rules: no public explorer, plain
+http only on this machine, a per-payment child token, and a signed, fresh
+answer that echoes the ask.
+
+Storage is a small key/value interface: IndexedDB in the app, a memory adapter
+in tests (the IDB adapter itself is exercised by the UI layer).
 
 ## Gates
 
