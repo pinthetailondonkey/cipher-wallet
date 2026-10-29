@@ -91,9 +91,12 @@ export function scanTransaction({ pocket, transactionPublicKey: txPublicKey, out
       throw new Error(`Output ${index} has no one-time key.`);
     }
     if (output.viewTag !== undefined && output.viewTag !== viewTag(derivation, index)) continue;
-    // A peer can serve an output key that is not a curve point. That output is
-    // not ours, and it is not a reason to stop scanning.
-    if (!isValidPublicKey(output.key)) continue;
+    // A peer can serve an output key that is not a curve point. Nothing here
+    // feeds that key into a curve operation: it is compared, byte for byte,
+    // with a point this wallet derived itself, so a junk key is simply not a
+    // match. There used to be a validity check on this line; it was removed
+    // because deleting it changed no outcome, and a guard that cannot fail is
+    // not a guard — it is a comment that looks like one.
     const expected = derivePublicKey(derivation, index, pocket.spend);
     if (sameBytes(expected, output.key)) matches.push(index);
   }

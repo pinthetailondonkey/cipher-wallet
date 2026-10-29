@@ -85,7 +85,11 @@ test('an output with another one-time key is not ours', () => {
   assert.deepEqual(scanTransaction({ pocket: POCKET, ...tx, outputs: mixed }), [0]);
 });
 
-test('output keys that are not curve points are skipped, not fatal', () => {
+test('an output key that is not a curve point is not a match, and does not stop the scan', () => {
+  // What is asserted is the outcome: junk keys are not ours, the real one still
+  // is, and the scan returns. It is not asserted that a validity guard skipped
+  // them — there is no such guard, because the comparison is bytes and a guard
+  // whose removal changed nothing was not doing any work.
   const tx = sendTo(POCKET, { outputs: 3 });
   const junk = [
     { key: new Uint8Array(32), viewTag: tx.outputs[0].viewTag }, // zero key
