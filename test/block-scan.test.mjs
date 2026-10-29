@@ -58,7 +58,7 @@ function witness(name, ...values) {
 
 // A peer that answers getcfilters and getdata from the same table, so a test
 // states once what it serves and cannot accidentally disagree with itself.
-async function startPeer({ blocks, filters }) {
+async function startPeer({ blocks, filters, asked = [] }) {
   const sockets = new Set();
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -78,6 +78,7 @@ async function startPeer({ blocks, filters }) {
         if (message.command === 'getcfilters') {
           // 37-byte payload: type, start height, then the stop hash in internal order.
           const stop = hex.encode(reverseBytes(message.payload.slice(5, 37)));
+          asked.push({ stop, startHeight: message.payload[1] | (message.payload[2] << 8) | (message.payload[3] << 16) | (message.payload[4] << 24) });
           const filter = filters[stop];
           if (filter) socket.write(frame('cfilter', encodeCfilter({ blockHash: stop, filter })));
           continue;
@@ -137,7 +138,7 @@ test('a scan pays attention to the filter and believes the block', async () => {
     const { fetchFilter, fetchBlock } = client();
     const out = await scanBack({
       fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
-      tipHash: TIP_HASH, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+      tipHash: TIP_HASH, tipHeight: 100, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
     });
     assert.equal(out.scanned, 2);
     assert.deepEqual(out.quiet, []);
@@ -147,6 +148,30 @@ test('a scan pays attention to the filter and believes the block', async () => {
     assert.equal(out.payments[0].value, AMOUNT);
     assert.equal(typeof out.payments[0].value, 'bigint', 'an amount is a bigint of satoshis');
     witness('scan', `${out.scanned} blocks`, `${out.payments.length} payment`, hex.encode(out.payments[0].script).slice(0, 14));
+  } finally {
+    await peer.close();
+  }
+});
+
+test('a filter is asked for by the block\'s own height, never from genesis', async () => {
+  // AUDITOR's start-height item. getcfilters serves a RANGE; zero means "every
+  // filter from genesis up to this block", which is not the one-block question
+  // this wallet is asking. The tip is at height 100 and its parent at 99.
+  const asked = [];
+  const peer = await startPeer({
+    blocks: { [TIP_HASH]: TIP, [PARENT_HASH]: PARENT },
+    filters: { [TIP_HASH]: filterFor(TIP_HASH, OTHER_SCRIPT), [PARENT_HASH]: filterFor(PARENT_HASH, OUR_SCRIPT) },
+    asked,
+  });
+  try {
+    const { fetchFilter, fetchBlock } = client();
+    await scanBack({
+      fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
+      tipHash: TIP_HASH, tipHeight: 100, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+    });
+    const parent = asked.find((entry) => entry.stop === PARENT_HASH);
+    assert.equal(parent.startHeight, 99, 'the parent block is asked for at its own height');
+    witness('filter question', `stop ${parent.stop.slice(0, 12)}`, `start height ${parent.startHeight}`);
   } finally {
     await peer.close();
   }
@@ -163,7 +188,7 @@ test('a filter that names us over a block that does not pay us changes no belief
     const { fetchFilter, fetchBlock } = client();
     const out = await scanBack({
       fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
-      tipHash: TIP_HASH, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+      tipHash: TIP_HASH, tipHeight: 100, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
     });
     assert.deepEqual(out.quiet.map((q) => q.hash), [TIP_HASH]);
     assert.deepEqual(out.payments.map((p) => p.blockHash), [PARENT_HASH]);
@@ -188,7 +213,7 @@ test('a filter that omits us hides nothing while the walk reads every body', asy
     const { fetchFilter, fetchBlock } = client();
     const out = await scanBack({
       fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
-      tipHash: TIP_HASH, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+      tipHash: TIP_HASH, tipHeight: 100, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
     });
     assert.equal(out.scanned, 2);
     assert.deepEqual(out.quiet, []);
@@ -217,7 +242,7 @@ test('an honest spend of our own coin is not reported as a lying filter', async 
     const { fetchFilter, fetchBlock } = client();
     const out = await scanBack({
       fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
-      tipHash: spentTipHash, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+      tipHash: spentTipHash, tipHeight: 100, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
     });
     assert.deepEqual(out.quiet, [], 'a spend is not a lie');
     assert.equal(out.spent.length, 1);
@@ -246,7 +271,7 @@ test('a spend whose prevout is outside the walk suppresses the lying-filter verd
     const { fetchFilter, fetchBlock } = client();
     const out = await scanBack({
       fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
-      tipHash: orphanHash, scripts: [OUR_SCRIPT],
+      tipHash: orphanHash, tipHeight: 100, scripts: [OUR_SCRIPT],
     });
     assert.deepEqual(out.quiet, [], 'cannot tell a lie from an older spend');
     assert.equal(out.unresolved, 1);
@@ -269,7 +294,7 @@ test('a block whose body does not hash up to its header is refused before any ou
     await assert.rejects(
       scanBack({
         fetchFilter, fetchBlock, peer: { host: '127.0.0.1', port: peer.port },
-        tipHash: TIP_HASH, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
+        tipHash: TIP_HASH, tipHeight: 100, stopHash: PARENT_HASH, scripts: [OUR_SCRIPT],
       }),
       /merkle root/,
     );
@@ -283,6 +308,6 @@ test('a scan with no scripts is refused before a peer is told anything', async (
   let opened = 0;
   const fetchBlock = async () => { opened += 1; return { bytes: new Uint8Array(0) }; };
   const fetchFilter = async () => { opened += 1; return { filter: new Uint8Array([0]) }; };
-  await assert.rejects(scanBack({ fetchFilter, fetchBlock, peer: {}, tipHash: TIP_HASH, scripts: [] }), /no scripts/);
+  await assert.rejects(scanBack({ fetchFilter, fetchBlock, peer: {}, tipHash: TIP_HASH, tipHeight: 100, scripts: [] }), /no scripts/);
   assert.equal(opened, 0, 'a scan that would learn nothing must not tell a peer it asked');
 });

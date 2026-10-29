@@ -68,7 +68,7 @@ function isCoinbaseInput(input) {
 //                spent us, and every input in the walk resolved: a lying filter.
 //   unresolved — input spends whose prevout is outside the walked range.
 //   scanned    — how many blocks were walked.
-export async function scanBack({ fetchFilter, fetchBlock, peer, tipHash, stopHash = null, maxSteps = 1000, scripts = [] } = {}) {
+export async function scanBack({ fetchFilter, fetchBlock, peer, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [] } = {}) {
   if (typeof fetchFilter !== 'function') throw new Error('A scan needs a way to fetch a filter.');
   const wanted = (Array.isArray(scripts) ? scripts : []).filter((script) => script instanceof Uint8Array && script.length > 0);
   if (wanted.length === 0) throw new Error('A scan with no scripts would learn nothing, and would still tell a peer we asked.');
@@ -79,14 +79,14 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, tipHash, stopHas
   const outputsSeen = new Map();
   let unresolved = 0;
 
-  const blocks = await walkBack({ fetchBlock, peer, tipHash, stopHash, maxSteps });
+  const blocks = await walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash, maxSteps });
 
   // Oldest first, though the walk hands them back newest first. A block's spends
   // point at outputs in EARLIER blocks, so reading forwards is the only order in
   // which "this block spends our coin" can be answered from blocks already read.
   for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const { hash, body } = blocks[i];
-    const { filter } = await fetchFilter(peer, hash);
+    const { hash, height, body } = blocks[i];
+    const { filter } = await fetchFilter(peer, hash, { startHeight: height });
     const mentioned = wanted.filter((script) => matchesFilter(filter, hash, script));
 
     let paidHere = 0;

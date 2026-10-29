@@ -145,7 +145,7 @@ test('two honest peers agree, and the filter really names our script', async () 
   const b = await startPeer(honestAnswer(HONEST));
   try {
     const pool = poolFor(a, b);
-    const out = await agreedFilter(pool, client(), BLOCK);
+    const out = await agreedFilter(pool, client(), BLOCK, { startHeight: 5 });
     witness('honest agreement', hex.encode(out.filter).slice(0, 48), `peers=${out.peers.length}`);
     assert.equal(out.peers.length, 2);
     assert.equal(matchesFilter(out.filter, BLOCK, OUR_SCRIPT), true);
@@ -163,7 +163,7 @@ test('a peer answering about another block cannot make an agreement', async () =
   const liar = await startPeer(honestAnswer(HONEST, OTHER_BLOCK));
   try {
     const pool = poolFor(a, liar);
-    await assert.rejects(agreedFilter(pool, client(), BLOCK), /did not agree/);
+    await assert.rejects(agreedFilter(pool, client(), BLOCK, { startHeight: 5 }), /did not agree/);
     witness('wrong-block liar', 'refused', OTHER_BLOCK);
   } finally {
     await a.close(); await liar.close();
@@ -180,7 +180,7 @@ test('a peer sending a corrupt frame is not an answer', async () => {
   });
   try {
     const pool = poolFor(a, liar);
-    await assert.rejects(agreedFilter(pool, client(), BLOCK), /did not agree/);
+    await assert.rejects(agreedFilter(pool, client(), BLOCK, { startHeight: 5 }), /did not agree/);
     witness('corrupt-frame liar', 'refused');
   } finally {
     await a.close(); await liar.close();
@@ -192,7 +192,7 @@ test('a peer that never answers is not an answer', async () => {
   const mute = await startPeer(() => []);
   try {
     const pool = poolFor(a, mute);
-    await assert.rejects(agreedFilter(pool, client(300), BLOCK), /did not agree/);
+    await assert.rejects(agreedFilter(pool, client(300), BLOCK, { startHeight: 5 }), /did not agree/);
     witness('silent peer', 'refused');
   } finally {
     await a.close(); await mute.close();
@@ -202,7 +202,7 @@ test('a peer that never answers is not an answer', async () => {
 test('a different filter type is refused', async () => {
   const a = await startPeer(() => frame('cfilter', encodeCfilter({ blockHash: BLOCK, filter: HONEST, filterType: 1 })));
   try {
-    await assert.rejects(client()({ host: '127.0.0.1', port: a.port }, BLOCK), /filter type/);
+    await assert.rejects(client()({ host: '127.0.0.1', port: a.port }, BLOCK, { startHeight: 5 }), /filter type/);
     witness('wrong filter type', 'refused');
   } finally {
     await a.close();
@@ -216,7 +216,7 @@ test('the client itself refuses an answer about another block, without a pool ab
   const liar = await startPeer(honestAnswer(HONEST, OTHER_BLOCK));
   try {
     await assert.rejects(
-      client()({ host: '127.0.0.1', port: liar.port }, BLOCK),
+      client()({ host: '127.0.0.1', port: liar.port }, BLOCK, { startHeight: 5 }),
       /answered about block/,
     );
     witness('client-level wrong-block answer', `asked ${BLOCK.slice(0, 8)}`, `told ${OTHER_BLOCK.slice(0, 8)}`, 'refused');
@@ -257,13 +257,13 @@ test('THE TIGHTENED LIMIT: two peers agreeing on a fabricated filter are refused
     const client = createPeerClient({ connect, timeoutMs: 2000 });
     // Layer 1: agreement alone cannot tell them apart. This is the state the
     // wallet must never act on, and the reason verifiedFilter exists.
-    const agreed = await agreedFilter(pool, client.fetchFilter, blockHash);
+    const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { startHeight: 5 });
     assert.equal(hex.encode(agreed.filter), hex.encode(fabricated));
     witness('fabricated agreement', hex.encode(agreed.filter).slice(0, 48), `height ${height}`, 'agreement alone: fooled');
 
     // Layer 2: the same peers, the same lie, checked against the block.
     await assert.rejects(
-      verifiedFilter(pool, client, blockHash, { prevScripts: prevScripts.map((script) => hex.decode(script)) }),
+      verifiedFilter(pool, client, blockHash, { prevScripts: prevScripts.map((script) => hex.decode(script)), startHeight: 5 }),
       /does not produce/,
     );
     witness('fabricated agreement with the block checked', 'refused');
@@ -325,13 +325,13 @@ test('THE FORGE: a real header carrying a body it does not commit to is refused,
     const pool = poolFor(a, b);
     const client = createPeerClient({ connect, timeoutMs: 2000 });
     // Agreement is satisfied — two peers, the same bytes.
-    const agreed = await agreedFilter(pool, client.fetchFilter, blockHash);
+    const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { startHeight: 5 });
     assert.equal(hex.encode(agreed.filter), hex.encode(fabricated));
     // And the filter matches the forged body, which is why the body check is
     // the only thing standing between this and a believed payment.
     assert.equal(matchesFilter(agreed.filter, blockHash, OUR_SCRIPT), true);
 
-    await assert.rejects(verifiedFilter(pool, client, blockHash), /merkle root/);
+    await assert.rejects(verifiedFilter(pool, client, blockHash, { startHeight: 5 }), /merkle root/);
     witness('forged body under a real header', `agreement ${agreed.peers.length} peers`, 'merkle root: refused');
   } finally {
     await a.close(); await b.close();
@@ -351,7 +351,7 @@ test('an honest filter verified against its block is accepted', async () => {
   try {
     const pool = poolFor(a, b);
     const client = createPeerClient({ connect, timeoutMs: 2000 });
-    const out = await verifiedFilter(pool, client, blockHash, { prevScripts: prevScripts.map((script) => hex.decode(script)) });
+    const out = await verifiedFilter(pool, client, blockHash, { prevScripts: prevScripts.map((script) => hex.decode(script)), startHeight: 5 });
     witness('verified honest filter', hex.encode(out.filter).slice(0, 48));
     assert.equal(hex.encode(out.filter), filterHex);
     assert.equal(out.peers.length, 2);

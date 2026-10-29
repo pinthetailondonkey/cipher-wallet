@@ -115,7 +115,7 @@ export function createPeerPool({ allowClearnet = false } = {}) {
 // Ask two peers for the same filter. Agreement is the only answer that counts;
 // disagreement means one of them is lying and this wallet does not know which,
 // so nothing is believed and the caller is told which peers disagreed.
-export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {}) {
+export async function agreedFilter(pool, fetchFilter, blockHash, { peers, startHeight } = {}) {
   // The hash the question was about, in one spelling. An answer has to name it
   // back: a valid filter from another block is not evidence about this block,
   // and comparing filter bytes alone would let two such answers agree on data
@@ -136,7 +136,7 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {})
   for (const peer of asked) {
     let answer;
     try {
-      answer = await fetchFilter(peer, askedHash);
+      answer = await fetchFilter(peer, askedHash, { startHeight });
     } catch (error) {
       answers.push({ peer, error: error?.message || String(error) });
       continue;
@@ -174,8 +174,8 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers } = {})
 // body the header does not commit to is a refusal here rather than a believed
 // payment. This comment previously claimed the forge was impossible while it
 // was not; the false claim is recorded in README and pinned by a test.
-export async function verifiedFilter(pool, client, blockHash, { prevScripts, peers } = {}) {
-  const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { peers });
+export async function verifiedFilter(pool, client, blockHash, { prevScripts, peers, startHeight } = {}) {
+  const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { peers, startHeight });
   const asked = String(blockHash ?? '').trim().toLowerCase();
 
   // Ask a peer that agreed. If it will not serve the block, the filter stays

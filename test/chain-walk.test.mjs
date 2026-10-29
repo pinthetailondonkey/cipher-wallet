@@ -130,7 +130,7 @@ test('a two-block walk accepts a link that joins and stops where it is told', as
   const peer = await startPeer(serve);
   try {
     const { fetchBlock } = createPeerClient({ connect, timeoutMs: 2000 });
-    const blocks = await walkBack({ fetchBlock, peer: { host: '127.0.0.1', port: peer.port }, tipHash: TIP_HASH, stopHash: PARENT_HASH });
+    const blocks = await walkBack({ fetchBlock, peer: { host: '127.0.0.1', port: peer.port }, tipHash: TIP_HASH, tipHeight: 100, stopHash: PARENT_HASH });
     witness('walk', blocks.map((b) => b.hash.slice(0, 16)).join(' -> '));
     assert.equal(blocks.length, 2);
     assert.equal(blocks[0].hash, TIP_HASH);
@@ -155,7 +155,7 @@ test('a peer serving the wrong bytes for the parent is refused, not walked throu
   try {
     const { fetchBlock } = createPeerClient({ connect, timeoutMs: 2000 });
     await assert.rejects(
-      walkBack({ fetchBlock, peer: { host: '127.0.0.1', port: peer.port }, tipHash: TIP_HASH, stopHash: PARENT_HASH }),
+      walkBack({ fetchBlock, peer: { host: '127.0.0.1', port: peer.port }, tipHash: TIP_HASH, tipHeight: 100, stopHash: PARENT_HASH }),
       /served block .* not /,
     );
     witness('wrong parent bytes', `asked ${PARENT_HASH.slice(0, 16)}`, 'got another vector’s block', 'refused');
@@ -169,7 +169,7 @@ test('a walk that never reaches a stop refuses instead of looping', async () => 
   try {
     const { fetchBlock } = createPeerClient({ connect, timeoutMs: 300 });
     await assert.rejects(
-      walkBack({ fetchBlock, peer: { host: '127.0.0.1', port: peer.port }, tipHash: TIP_HASH, maxSteps: 2 }),
+      walkBack({ fetchBlock, peer: { host: '127.0.0.1', port: peer.port }, tipHash: TIP_HASH, tipHeight: 100, maxSteps: 2 }),
       /did not answer in time|did not reach a stop/,
     );
     witness('silent peer', 'refused');
@@ -181,7 +181,10 @@ test('a walk that never reaches a stop refuses instead of looping', async () => 
 test('a hash that is not a hash is refused before any connection is opened', async () => {
   let opened = 0;
   const fetchBlock = async () => { opened += 1; return { bytes: new Uint8Array(0) }; };
-  await assert.rejects(walkBack({ fetchBlock, peer: {}, tipHash: 'not-a-hash' }), /64 hex/);
+  await assert.rejects(walkBack({ fetchBlock, peer: {}, tipHash: 'not-a-hash', tipHeight: 100 }), /64 hex/);
+  // A walk knows one height per block only if it is told where it started, and
+  // every filter question downstream depends on that height.
+  await assert.rejects(walkBack({ fetchBlock, peer: {}, tipHash: TIP_HASH }), /height of its tip/);
   assert.equal(opened, 0, 'a bad request must not reach a peer');
   assert.throws(() => blockHeader(new Uint8Array(79)), /80-byte header/);
 });

@@ -74,7 +74,7 @@ const SERVICES = 1n | 64n;
 test('a peer that shakes hands properly is accepted', async () => {
   const peer = await startPeer([['version', encodeVersion({ nonce: 7n, services: SERVICES })], ['verack', new Uint8Array()]]);
   try {
-    const answer = await client().fetchFilter(peer, BLOCK);
+    const answer = await client().fetchFilter(peer, BLOCK, { startHeight: 5 });
     assert.equal(answer.blockHash, BLOCK);
     console.log('[handshake] ordered handshake accepted, filter returned');
   } finally {
@@ -85,7 +85,7 @@ test('a peer that shakes hands properly is accepted', async () => {
 test('a verack before the version is refused', async () => {
   const peer = await startPeer([['verack', new Uint8Array()], ['version', encodeVersion({ nonce: 7n, services: SERVICES })]]);
   try {
-    await assert.rejects(client().fetchFilter(peer, BLOCK), /acknowledged a handshake it never offered/);
+    await assert.rejects(client().fetchFilter(peer, BLOCK, { startHeight: 5 }), /acknowledged a handshake it never offered/);
     console.log('[handshake] verack-before-version refused');
   } finally {
     await peer.close();
@@ -102,7 +102,7 @@ test('a second verack is refused', async () => {
     // The handshake ends on the first verack, so the second one arrives while
     // the filter is being waited for — which is exactly where a re-handshake has
     // to be refused rather than ignored as an uninteresting message.
-    await assert.rejects(client().fetchFilter(peer, BLOCK), /re-opened the handshake/);
+    await assert.rejects(client().fetchFilter(peer, BLOCK, { startHeight: 5 }), /re-opened the handshake/);
     console.log('[handshake] duplicate verack refused');
   } finally {
     await peer.close();
@@ -118,11 +118,24 @@ test('a second version is refused', async () => {
     ['verack', new Uint8Array()],
   ]);
   try {
-    await assert.rejects(client().fetchFilter(peer, BLOCK), /second version/);
+    await assert.rejects(client().fetchFilter(peer, BLOCK, { startHeight: 5 }), /second version/);
     console.log('[handshake] duplicate version refused');
   } finally {
     await peer.close();
   }
+});
+
+test('a filter question without the block height is refused before it is sent', async () => {
+  // getcfilters is a range question: start height to stop hash. Asked with
+  // zero, a real node streams every filter from genesis and the first one
+  // describes a block nobody asked about. A caller that does not know the
+  // height is refused here, not flooded with the wrong answer.
+  let opened = 0;
+  const once = async (_peer) => { opened += 1; return { write() {}, end() {}, onData() {}, onClose() {} }; };
+  const bare = createPeerClient({ connect: once, timeoutMs: 500 });
+  await assert.rejects(bare.fetchFilter({}, BLOCK), /by the height/);
+  assert.equal(opened, 0, 'nothing is asked of a peer when the question is not yet answerable');
+  console.log('[handshake] heightless filter question refused before dialling');
 });
 
 test('a peer that never claimed compact filters is not asked for one', async () => {
@@ -131,7 +144,7 @@ test('a peer that never claimed compact filters is not asked for one', async () 
   // anyway spends the timeout and then reads as a wallet fault.
   const peer = await startPeer([['version', encodeVersion({ nonce: 7n, services: 1n })], ['verack', new Uint8Array()]]);
   try {
-    await assert.rejects(client().fetchFilter(peer, BLOCK), /does not say it serves compact filters/);
+    await assert.rejects(client().fetchFilter(peer, BLOCK, { startHeight: 5 }), /does not say it serves compact filters/);
     console.log('[handshake] unadvertised filter service refused');
   } finally {
     await peer.close();
@@ -141,7 +154,7 @@ test('a peer that never claimed compact filters is not asked for one', async () 
 test('a peer too old for filters is refused before anything is asked of it', async () => {
   const peer = await startPeer([['version', encodeVersion({ nonce: 7n, version: 70014, services: SERVICES })]]);
   try {
-    await assert.rejects(client().fetchFilter(peer, BLOCK), /too old/);
+    await assert.rejects(client().fetchFilter(peer, BLOCK, { startHeight: 5 }), /too old/);
     console.log('[handshake] old protocol refused');
   } finally {
     await peer.close();

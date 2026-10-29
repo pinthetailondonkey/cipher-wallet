@@ -58,11 +58,17 @@ export function blockConnects(previousBlock, block) {
 // `fetchBlock(peer, hash)` is `client.fetchBlock` from peerClient.js: it returns
 // { bytes }. The hash check lives here rather than in the transport, because it
 // is this module that knows which block it asked for.
-export async function walkBack({ fetchBlock, peer, tipHash, stopHash = null, maxSteps = 1000, onBlock } = {}) {
+export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash = null, maxSteps = 1000, onBlock } = {}) {
   if (typeof fetchBlock !== 'function') throw new Error('A walk needs a way to fetch a block.');
   const tip = String(tipHash ?? '').trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(tip)) throw new Error('A tip hash is 64 hex characters.');
   const stop = stopHash ? String(stopHash).trim().toLowerCase() : null;
+  // A walk steps its parent's parent, so it knows one height per block, and it
+  // is the only thing in this wallet that does. Required, not defaulted: a walk
+  // that guesses a height hands a filter question the wrong range.
+  if (!Number.isInteger(tipHeight) || tipHeight < 0) {
+    throw new Error('A walk starts from the height of its tip. Without it, no block it finds can be asked for a filter.');
+  }
 
   const blocks = [];
   let asked = tip;
@@ -85,7 +91,7 @@ export async function walkBack({ fetchBlock, peer, tipHash, stopHash = null, max
       // the hash check above.
       throw new Error(`Block ${actual} does not connect to ${blockHash(previous)}.`);
     }
-    blocks.push({ hash: actual, bytes, body });
+    blocks.push({ hash: actual, height: tipHeight - step, bytes, body });
     await onBlock?.({ hash: actual, bytes, body });
     if (stop && actual === stop) return blocks;
     const parent = previousBlockHash(bytes);

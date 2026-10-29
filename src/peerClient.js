@@ -184,8 +184,17 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
 
   // Ask for one block's filter. The answer counts only if it names the block
   // that was asked about; anything else is a refusal naming what happened.
-  async function fetchFilter(peer, blockHash) {
+  async function fetchFilter(peer, blockHash, { startHeight } = {}) {
     const asked = normalizeHash(blockHash);
+    // getcfilters is a RANGE question: it serves every filter from start height
+    // up to the stop hash. Sending zero therefore asks a real node for the whole
+    // chain's filters from genesis, and the first one it sends describes a block
+    // nobody asked about. The height of the block being asked for is the only
+    // honest start, so a caller that does not know it is refused here rather
+    // than flooding a peer and misreading the first answer.
+    if (!Number.isInteger(startHeight) || startHeight < 0) {
+      throw new Error('A filter is asked for by the height of the block it belongs to.');
+    }
     return withSession(peer, async (session) => {
       // A peer that never claimed to serve compact filters is refused before a
       // question is asked of it. Asking anyway gets silence or an unrelated
@@ -193,7 +202,7 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
       if ((session.remote.services & NODE_COMPACT_FILTERS) === 0n) {
         throw new Error('That peer does not say it serves compact filters, so it is not asked.');
       }
-      session.send('getcfilters', encodeGetCfilters({ startHeight: 0, stopHash: asked }));
+      session.send('getcfilters', encodeGetCfilters({ startHeight, stopHash: asked }));
       for (;;) {
         const message = await session.nextAnswer();
         if (message.command !== 'cfilter') continue;
