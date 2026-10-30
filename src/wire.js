@@ -267,6 +267,67 @@ export function decodeHeaders(payload) {
   return { headers };
 }
 
+// getcfheaders: filter type, start height, stop hash. The range question for
+// FILTER HEADERS, which is what lets a walk learn a block's filter hash without
+// the filter or the block. Same four-byte height, and the same bound.
+export function encodeGetCFHeaders({ startHeight, stopHash, filterType = BASIC_FILTER_TYPE } = {}) {
+  if (!Number.isInteger(startHeight) || startHeight < 0 || startHeight > 0xffffffff) {
+    throw new Error('A start height is a whole number from 0 to 4294967295.');
+  }
+  const hash = wireHash(stopHash);
+  const out = new Uint8Array(1 + 4 + 32);
+  out[0] = filterType;
+  const view = new DataView(out.buffer);
+  view.setUint32(1, startHeight, true);
+  out.set(hash, 5);
+  return out;
+}
+
+// cfheaders: filter type, stop hash, the filter header this range continues,
+// then a count and that many filter hashes, oldest first.
+//
+// In display order going in and coming out, like every other hash a person
+// reads; reversed once here, at the wire, where the order changes.
+export function encodeCfHeaders({ stopHash, prevFilterHeader, filterHashes = [], filterType = BASIC_FILTER_TYPE } = {}) {
+  const list = Array.isArray(filterHashes) ? filterHashes : [];
+  const stop = wireHash(stopHash);
+  const prev = wireHash(prevFilterHeader);
+  const count = encodeCompactSize(list.length);
+  const out = new Uint8Array(1 + 32 + 32 + count.length + 32 * list.length);
+  out[0] = filterType;
+  out.set(stop, 1);
+  out.set(prev, 33);
+  out.set(count, 65);
+  let at = 65 + count.length;
+  for (const hash of list) {
+    out.set(wireHash(String(hash).trim().toLowerCase()), at);
+    at += 32;
+  }
+  return out;
+}
+
+export function decodeCfHeaders(payload) {
+  if (!(payload instanceof Uint8Array) || payload.length < 65) {
+    throw new Error('A cfheaders message is at least 65 bytes.');
+  }
+  const count = readCanonicalVarint(payload, 65);
+  const at = count.offset;
+  const want = at + Number(count.value) * 32;
+  if (payload.length !== want) {
+    throw new Error('That cfheaders answer is cut short: its count and its bytes disagree.');
+  }
+  const filterHashes = [];
+  for (let i = 0; i < Number(count.value); i += 1) {
+    filterHashes.push(displayHash(payload.slice(at + i * 32, at + (i + 1) * 32)));
+  }
+  return {
+    filterType: payload[0],
+    stopHash: displayHash(payload.slice(1, 33)),
+    prevFilterHeader: displayHash(payload.slice(33, 65)),
+    filterHashes,
+  };
+}
+
 // CompactSize: the same seven-bits-per-byte varint the rest of the protocol
 // uses, written here so a message can be built without reaching into tx.js.
 export function encodeCompactSize(value) {

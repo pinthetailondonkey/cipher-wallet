@@ -17,11 +17,15 @@ import { hex } from '@scure/base';
 import {
   MAX_LOCATOR,
   PROTOCOL_VERSION,
+  decodeCfHeaders,
   decodeHeaders,
+  encodeCfHeaders,
+  encodeGetCFHeaders,
   encodeGetHeaders,
   encodeHeaders,
 } from '../src/wire.js';
 import { headerHash } from '../src/chain.js';
+import { filterHeader } from '../src/filters.js';
 
 const VECTORS = JSON.parse(
   readFileSync(new URL('./fixtures/bip158-testnet-19.json', import.meta.url), 'utf8'),
@@ -34,6 +38,11 @@ const CHILD_DISPLAY = HEIGHT_3[1];
 // The fixture's third column is the whole block; its first 80 bytes are the
 // header, which is the only part a getheaders answer carries.
 const CHILD_HEADER = hex.decode(HEIGHT_3[2]).slice(0, 80);
+// Filter-header chain: each row's "Basic Header" continues the row before it.
+const FILTER_2 = HEIGHT_2;
+const FILTER_1 = VECTORS[0];
+const FILTER_HEADER_1 = FILTER_1[6];
+const FILTER_HEADER_2 = FILTER_2[6];
 
 function witness(name, ...values) {
   console.log(`[headers] ${name}: ${values.join(' | ')}`);
@@ -80,6 +89,61 @@ test('a headers answer whose length disagrees with its count is refused, not par
   extra.set(message, 0);
   assert.throws(() => decodeHeaders(extra), /cut short|80 bytes|disagree/);
   assert.throws(() => decodeHeaders(new Uint8Array(0)), /count|varint|short/i);
+});
+
+test('getcfheaders asks the same range question a filter does, by height and stop hash', () => {
+  const message = encodeGetCFHeaders({ startHeight: 2, stopHash: CHILD_DISPLAY });
+  assert.equal(message.length, 1 + 4 + 32);
+  assert.equal(message[0], 0x00, 'basic filter type');
+  assert.equal(hex.encode(message.slice(1, 5)), '02000000', 'height 2, little-endian');
+  assert.equal(hex.encode(message.slice(5, 37)), hex.encode(hex.decode(CHILD_DISPLAY).reverse()));
+  // The same four bytes, bounded the same way, for the same reason: 2^32 would
+  // wrap to zero and ask for the chain from genesis.
+  assert.throws(() => encodeGetCFHeaders({ startHeight: 2 ** 32, stopHash: CHILD_DISPLAY }), /start height/);
+  assert.throws(() => encodeGetCFHeaders({ startHeight: -1, stopHash: CHILD_DISPLAY }), /start height/);
+  witness('getcfheaders', `height 2`, `stop ${CHILD_DISPLAY.slice(0, 16)}`);
+});
+
+test('cfheaders answers with filter hashes in order, under the header they continue', () => {
+  const message = encodeCfHeaders({
+    stopHash: CHILD_DISPLAY,
+    prevFilterHeader: FILTER_HEADER_1,
+    filterHashes: [FILTER_HEADER_2],
+  });
+  assert.equal(message.length, 1 + 32 + 32 + 1 + 32);
+  assert.equal(message[0], 0x00);
+  assert.equal(hex.encode(message.slice(1, 33)), hex.encode(hex.decode(CHILD_DISPLAY).reverse()));
+  const decoded = decodeCfHeaders(message);
+  assert.equal(decoded.stopHash, CHILD_DISPLAY);
+  assert.equal(decoded.prevFilterHeader, FILTER_HEADER_1);
+  assert.deepEqual(decoded.filterHashes, [FILTER_HEADER_2]);
+  // What the answer means: a filter header is the previous one continued, which
+  // is the field the fixture carries for exactly this row. A peer that skips or
+  // reorders a filter breaks the chain here rather than quietly serving a
+  // shorter range.
+  assert.equal(
+    FILTER_HEADER_2,
+    hex.encode(filterHeader(hex.decode(FILTER_2[5]), hex.decode(FILTER_2[4]))),
+    'the row’s own filter, continued under the header it names',
+  );
+  assert.notEqual(
+    FILTER_HEADER_2,
+    FILTER_2[4],
+    'a filter header that equals the one it continues would make this pin vacuous',
+  );
+  witness('cfheaders', `prev ${FILTER_HEADER_1.slice(0, 16)}`, `next ${FILTER_HEADER_2.slice(0, 16)}`);
+});
+
+test('a cfheaders answer whose count and bytes disagree is refused', () => {
+  const message = encodeCfHeaders({
+    stopHash: CHILD_DISPLAY,
+    prevFilterHeader: FILTER_HEADER_1,
+    filterHashes: [FILTER_HEADER_2, FILTER_HEADER_2],
+  });
+  assert.throws(() => decodeCfHeaders(message.slice(0, message.length - 1)), /disagree|cut short/);
+  // Truncated before its count byte: refused too, and not by reading a count
+  // out of the middle of a hash.
+  assert.throws(() => decodeCfHeaders(message.slice(0, 1 + 64)), /disagree|cut short|count/);
 });
 
 test('an empty headers answer is a valid answer, and it is not a refusal', () => {
