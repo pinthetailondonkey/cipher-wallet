@@ -53,19 +53,24 @@ amounts now decrypt (`src/monero/ringct.js`), but they are pinned only to
 keccak's vectors and Monero's varint, not to a real transaction, so nothing may
 gate a payment on them yet.
 
-Reading a block is now built as far as it can be without a real sample.
-`src/monero/block.js` parses a block blob strictly, and `src/monero/nodeClient.js`
-fetches one from a node, refusing every answer it cannot frame. Two limits are
-load-bearing, and each is written where a caller meets it rather than only here:
-the parser **does not prove a block's identity** — that rule needs one real
-(bytes, hash) pair, and pinning our own writer's output would prove only that our
-arithmetic agrees with itself — and it **frames only RingCT type 0**, so every
-encrypted transaction is refused rather than guessed at, because a wrong proof
-size would silently shift every following transaction. In plain words: this build
-can read a block but cannot yet say a block is the one it asked for, and it
-refuses every modern mainnet block. Nothing it returns may gate a payment. What
-is not built: wiring a parsed block into a pocket scan, and anything that spends
-or broadcasts. Nothing on the Monero side has been
+**The block reader was withdrawn after review, and the withdrawal is the
+feature.** `src/monero/nodeClient.js` fetches a block from one pinned node and
+refuses every answer it cannot frame — that part holds and is still tested.
+`src/monero/block.js` parses a block header and refuses every block body, out
+loud, because the body model it shipped with was not Monero's. Review found two
+defects that 382 green tests could not see, and the reason they could not see
+them is the point: the parser and its fixtures were written by the same hand.
+The body is `header || miner_tx || varint(count) || 32-byte hash × count`, not a
+list of full transactions; and a version 2 transaction id is
+`cn_fast_hash(prefix_hash || base_rct_hash || prunable_hash)`, not a hash of the
+prefix alone. Every real miner transaction is version 2, so the old reader would
+have emitted confident, wrong identities. A wrong identity is worse than none,
+so the door refuses, there is no flag that opens it, and the tests assert that
+both the real shape and the old fictional shape are refused — a fixture written
+here may not stand in for a real sample. What remains proven: the header layout,
+the node client's refusals, and the fact that nothing here can gate a payment.
+What is not built: any body model, the block id rule, wiring into a pocket scan,
+and anything that spends or broadcasts. Nothing on the Monero side has been
 funded or touched mainnet.
 
 The transport for reading blocks is ruled: a shipped list of public nodes in
