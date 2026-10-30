@@ -157,10 +157,16 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
   }
   const blob = hex.decode(result.blob.toLowerCase());
 
-  // The daemon's own claims about its own answer. Cheap to make, cheap to catch,
-  // and never a proof: the block's identity is settled by block.js, which today
-  // says it cannot prove one.
-  const claimed = result.json?.block_header ?? null;
+  // The daemon's own claims about its own answer. Cheap to make, cheap to
+  // catch, and never a proof: the block's identity is settled by block.js,
+  // which proves the id from the bytes themselves. The claims sit at the TOP
+  // LEVEL of the answer, in block_header — the daemon's parsed copy rides
+  // beside them as a STRING in `json`, for humans, and is never read here.
+  // This once read `result.json?.block_header`, an object lookup that never
+  // fires against the string a real daemon sends, so the check below was dead
+  // while its test stayed green; the fix is proven against a real answer
+  // pinned in test/fixtures/monero-node-client-block-answer.json.
+  const claimed = result.block_header ?? null;
   if (claimed) {
     if (byHash && claimed.hash && String(claimed.hash).toLowerCase() !== params.hash) {
       throw new Error(`The Monero node ${address} said it served ${claimed.hash} when asked for ${params.hash}.`);

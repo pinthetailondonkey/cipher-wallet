@@ -8,6 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { getBlock, getInfo } from '../src/monero/nodeClient.js';
 
 const NODE = 'peer.onion:18081';
@@ -104,10 +105,60 @@ test('a caller that brings its own signal keeps it, and no second deadline is im
   witness('own signal', 'passed through, controller not built');
 });
 
-test('a node that says it served a different hash than the one asked for is refused', async () => {
-  const body = rpc({ blob: '00', json: { block_header: { hash: 'cd'.repeat(32), height: 7 } } });
-  await assert.rejects(getBlock(NODE, { hash: HASH }, { fetchImpl: async () => body }), /served cd/);
-  witness('hash claim', 'the daemon’s own claim is checked');
+// A real daemon's get_block answer, pinned as
+// test/fixtures/monero-node-client-block-answer.json. The daemon sends its
+// parsed copy as a STRING in `json` and its claims at the TOP LEVEL in
+// `block_header`. The first claim-check read `result.json?.block_header` — an
+// object lookup that never fires against the string a real daemon sends — and
+// the test that "proved" it passed json as an object: the fixture-writer's
+// trap a second time, in the door itself. Every case below serves the real
+// shape.
+const REAL_ANSWER = JSON.parse(readFileSync(new URL('./fixtures/monero-node-client-block-answer.json', import.meta.url), 'utf8'));
+const squeeze = (text) => String(text).replace(/\s+/g, '');
+
+function realRpc() {
+  const r = REAL_ANSWER.result;
+  const header = r.block_header;
+  return rpc({
+    blob: squeeze(r.blob),
+    json: JSON.stringify(r.json), // a real daemon sends a string; so does this
+    block_header: {
+      ...header,
+      hash: squeeze(header.hash),
+      prev_hash: squeeze(header.prev_hash),
+      miner_tx_hash: squeeze(header.miner_tx_hash),
+    },
+  });
+}
+
+test('a real daemon answer claiming a different hash than the one asked is refused', async () => {
+  await assert.rejects(
+    getBlock(NODE, { hash: HASH }, { fetchImpl: async () => realRpc() }),
+    (err) => err.message.includes('said it served') && err.message.includes(squeeze(REAL_ANSWER.result.block_header.hash)),
+  );
+  witness('real-shape hash claim', 'the top-level block_header is checked; json stays a string');
+});
+
+test('a real daemon answer claiming a different height than the one asked is refused', async () => {
+  const asked = REAL_ANSWER.result.block_header.height + 1;
+  await assert.rejects(
+    getBlock(NODE, { height: asked }, { fetchImpl: async () => realRpc() }),
+    (err) => err.message.includes('said it served height') && err.message.includes(String(REAL_ANSWER.result.block_header.height)),
+  );
+  witness('real-shape height claim', 'refused with both heights named');
+});
+
+test('a real daemon answer asked by its own height passes the check and carries the claims home', async () => {
+  const served = await getBlock(
+    NODE,
+    { height: REAL_ANSWER.result.block_header.height },
+    { fetchImpl: async () => realRpc() },
+  );
+  assert.equal(served.claimedHash, squeeze(REAL_ANSWER.result.block_header.hash));
+  assert.equal(served.claimedHeight, REAL_ANSWER.result.block_header.height);
+  assert.equal(served.claimedPrevHash, squeeze(REAL_ANSWER.result.block_header.prev_hash));
+  assert.equal(served.blob.length * 2, squeeze(REAL_ANSWER.result.blob).length, 'the blob comes home whole');
+  witness('real-shape agreement', 'the claims are carried home, not dropped');
 });
 
 test('asking by both hash and height, or by neither, is refused before any request is made', async () => {

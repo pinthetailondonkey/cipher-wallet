@@ -185,3 +185,28 @@ moves. The daemon's claims are recorded as a stranger's claims: what these
 fixtures pin is the bytes, and the proof that the ids belong to those bytes is
 this repository's own parser in `test/monero-block.test.mjs`, which computes
 each id from the blob and refuses any disagreement.
+
+## monero-node-client-block-answer.json
+
+One real monerod `get_block` answer for height 3795294, pinned for its SHAPE:
+the daemon sends its own parsed copy of the block as a STRING in `json`, and
+its claims (hash, height, prev_hash, miner_tx_hash) at the TOP LEVEL in
+`block_header`. The node client's claim check once read
+`result.json?.block_header` — an object lookup that never fires against the
+string a real daemon sends — so the check was dead while its test stayed
+green, because that test passed `json` as an object. Same node and transport
+as the block fixtures, same day; `test/monero-node-client.test.mjs` serves
+this answer to the client and proves a lying claim throws.
+
+Fixture sha256, spaced as always:
+
+    736dfdda312af557eb728ff2cbda7909 48940a173ac61e1d88444135c2bf429e
+
+**Transformations, visible:** every hex field of 64 characters or more carries
+a space every 32 characters, and `json` is stored PARSED and re-stringified by
+the test when serving — a real daemon sends it as a string and the client must
+meet it as one. The `json` contents are spaced too and are never read by the
+client; what is pinned is the shape, not the payload. The blob and ids equal
+`monero-block-mainnet.json` exactly, which is the re-derivation check for this
+file — a raw answer carries `depth`, which moves with the tip, so the raw
+bytes are not expected to hash the same twice.
