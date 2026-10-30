@@ -12,14 +12,14 @@ import net from 'node:net';
 import { createPeerClient, decodeVersion, encodeVersion, frame } from '../src/peerClient.js';
 import { hex } from '@scure/base';
 import { reverseBytes } from '../src/tx.js';
-import { decodeFrame, encodeCfilter } from '../src/wire.js';
+import { decodeFrame, encodeCfHeaders, encodeCfilter, encodeHeaders } from '../src/wire.js';
 
 const BLOCK = '11'.repeat(32);
 
 // A peer that says exactly what the test tells it to say, in order, then keeps
 // the socket open so a refusal has to come from this wallet and not from the
 // connection ending.
-async function startPeer(script) {
+async function startPeer(script, { answer } = {}) {
   const sockets = new Set();
   const seen = [];
   const server = net.createServer((socket) => {
@@ -38,6 +38,9 @@ async function startPeer(script) {
         buffered = buffered.slice(message.size);
         seen.push(message.command);
         if (message.command === 'version') decodeVersion(message.payload);
+        if (answer) for (const [command, payload] of answer(message.command, message.payload) ?? []) {
+          socket.write(frame(command, payload));
+        }
         if (message.command === 'getcfilters') {
           // Two filters: the one asked for, and one that is not, so a test that
           // gets past the handshake is visible.
@@ -162,6 +165,57 @@ test('a peer that never claimed compact filters is not asked for one', async () 
   try {
     await assert.rejects(client().fetchFilter(peer, BLOCK, { startHeight: 5 }), /does not say it serves compact filters/);
     console.log('[handshake] unadvertised filter service refused');
+  } finally {
+    await peer.close();
+  }
+});
+
+test('headers are asked for over the socket and come back in the order the peer sent them', async () => {
+  const header = new Uint8Array(80).fill(7);
+  const peer = await startPeer(
+    [['version', encodeVersion({ nonce: 7n, services: SERVICES })], ['verack', new Uint8Array()]],
+    { answer: (command) => (command === 'getheaders' ? [['headers', encodeHeaders([header, header])]] : []) },
+  );
+  try {
+    const { headers } = await client().fetchHeaders(peer, { locator: [BLOCK], stopHash: BLOCK });
+    assert.equal(headers.length, 2);
+    assert.equal(hex.encode(headers[0]), hex.encode(header));
+    assert.equal(peer.seen.includes('getheaders'), true);
+    console.log('[handshake] headers answered over the socket');
+  } finally {
+    await peer.close();
+  }
+});
+
+test('a peer that does not claim the chain service is not asked for headers either', async () => {
+  const peer = await startPeer([['version', encodeVersion({ nonce: 7n, services: 64n })], ['verack', new Uint8Array()]]);
+  try {
+    await assert.rejects(client().fetchHeaders(peer, { locator: [BLOCK], stopHash: BLOCK }), /whole chain/);
+    assert.equal(peer.seen.includes('getheaders'), false);
+    console.log('[handshake] unadvertised chain service refused before getheaders');
+  } finally {
+    await peer.close();
+  }
+});
+
+test('filter headers are asked for, and an answer about another range is refused', async () => {
+  const asked = hex.encode(hex.decode(BLOCK));
+  const peer = await startPeer(
+    [['version', encodeVersion({ nonce: 7n, services: SERVICES })], ['verack', new Uint8Array()]],
+    {
+      answer: (command, payload) => {
+        if (command !== 'getcfheaders') return [];
+        const stop = hex.encode(reverseBytes(payload.slice(5, 37)));
+        return [['cfheaders', encodeCfHeaders({ stopHash: stop, prevFilterHeader: '00'.repeat(32), filterHashes: [BLOCK] })]];
+      },
+    },
+  );
+  try {
+    const answer = await client().fetchFilterHeaders(peer, { startHeight: 3, stopHash: asked });
+    assert.equal(answer.stopHash, asked);
+    assert.equal(answer.prevFilterHeader, '00'.repeat(32));
+    assert.deepEqual(answer.filterHashes, [BLOCK]);
+    console.log('[handshake] cfheaders answered over the socket');
   } finally {
     await peer.close();
   }

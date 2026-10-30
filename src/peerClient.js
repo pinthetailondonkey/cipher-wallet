@@ -21,12 +21,16 @@ import {
   NODE_COMPACT_FILTERS,
   NODE_NETWORK,
   PROTOCOL_VERSION,
+  decodeCfHeaders,
   decodeCfilter,
   decodeFrame,
+  decodeHeaders,
   decodeVersion,
   encodeCfilter,
+  encodeGetCFHeaders,
   encodeGetCfilters,
   encodeGetData,
+  encodeGetHeaders,
   encodeVersion,
   frame,
 } from './wire.js';
@@ -241,7 +245,57 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
     });
   }
 
-  return { fetchFilter, fetchBlock };
+  // Ask for headers after a locator. The bytes are returned as sent, in order:
+  // chain.js is what checks each link, because it is chain.js that knows which
+  // anchor the walk started from.
+  //
+  // The answer is not the question. getheaders answers with whatever headers
+  // follow the locator it recognises, and a headers message carries no stop
+  // hash — so a peer that ignores the locator is caught by the link check, not
+  // here, and this refusal is limited to what the message itself can prove.
+  async function fetchHeaders(peer, { locator = [], stopHash } = {}) {
+    return withSession(peer, async (session) => {
+      if ((session.remote.services & NODE_NETWORK) === 0n) {
+        throw new Error('That peer does not say it serves the whole chain, so it is not asked for headers.');
+      }
+      session.send('getheaders', encodeGetHeaders({ locator, stopHash }));
+      for (;;) {
+        const message = await session.nextAnswer();
+        if (message.command !== 'headers') continue;
+        return decodeHeaders(message.payload);
+      }
+    });
+  }
+
+  // Ask for a range of filter headers. Unlike a headers answer, this one names
+  // the stop hash it answers about, so an answer about another range is refused
+  // here rather than after a chain check somewhere else.
+  async function fetchFilterHeaders(peer, { startHeight, stopHash } = {}) {
+    const asked = normalizeHash(stopHash);
+    if (!Number.isInteger(startHeight) || startHeight < 0 || startHeight > 0xffffffff) {
+      throw new Error('A filter header is asked for by the height its range starts at.');
+    }
+    return withSession(peer, async (session) => {
+      if ((session.remote.services & NODE_COMPACT_FILTERS) === 0n) {
+        throw new Error('That peer does not say it serves compact filters, so it is not asked for filter headers.');
+      }
+      session.send('getcfheaders', encodeGetCFHeaders({ startHeight, stopHash: asked }));
+      for (;;) {
+        const message = await session.nextAnswer();
+        if (message.command !== 'cfheaders') continue;
+        const answer = decodeCfHeaders(message.payload);
+        if (answer.filterType !== BASIC_FILTER_TYPE) {
+          throw new Error('That peer answered with a filter type this wallet did not ask for.');
+        }
+        if (answer.stopHash !== asked) {
+          throw new Error(`That peer answered about range ${answer.stopHash}, not ${asked}.`);
+        }
+        return answer;
+      }
+    });
+  }
+
+  return { fetchFilter, fetchBlock, fetchHeaders, fetchFilterHeaders };
 }
 
 // The framing a loopback peer needs to speak, exported so the drill does not
