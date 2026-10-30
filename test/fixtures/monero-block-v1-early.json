@@ -1,0 +1,32 @@
+{
+  "source": {
+    "what": "One real Monero mainnet block, as a monerod served it over json_rpc get_block.",
+    "node": "xmr-node.cakewallet.com:18081",
+    "daemonVersion": "the node answered get_info with no version string",
+    "nettype": "mainnet",
+    "tipHeightAtCapture": 3795323,
+    "capturedAt": "2026-10-30T10:15:37.021Z",
+    "transport": "curl --socks5-hostname via 127.0.0.1:9050 (Tor; the node saw a Tor exit, not this machine)",
+    "rederive": "CIPHER_XMR_NODE=<node:port> CIPHER_TOR_SOCKS=127.0.0.1:9050 node scripts/fetch-monero-block-fixture.mjs --height <height>",
+    "note": "The node is a stranger's server and its claims are recorded as claims. What the fixture pins is the bytes; the id and the chain link are proven by this repository's own parser in test/monero-block.test.mjs, against the id recorded here."
+  },
+  "block": {
+    "height": 100,
+    "majorVersion": 1,
+    "minorVersion": 0,
+    "claimedId": "ac3e11ca545e57c49fca2b4e8c48c03c 23be047c43e471e1394528b1f9f80b2d",
+    "claimedPrevId": "739dbaccd72255e068d98a74640d21ae 376f6c5c30b84c907d45e230ed3a4588",
+    "claimedMinerTxId": "5cea03624b460925725756f3c87dba70 38ed7d1788be6b425a1e26c61b39da1a",
+    "claimedTxHashes": [],
+    "blob": "010086aac49a05739dbaccd72255e068 d98a74640d21ae376f6c5c30b84c907d 45e230ed3a4588f3ee7c7401a00101ff 6407ddc41802c2d4ab6139bd66902f33 4b93300795b3b16ce6036d91f00cfc14 d7bc0780de8a80a4e8030230d03cf6ae e6ab2125687633304b46c30a340cf6f0 464c3e6a281a4ab5116a0380cab5ee01 02eee6e3d7e3874742694f6d5a0a62d5 18aeb2dd3d6152eb03fd89de3b146923 048088aca3cf020217a71e16f817881f 13ed7946f01a9195e7a4333d8ae28fd0 2e80319dbedbed5a8090cad2c60e02be 9be055f50f028e57cd4ae643f888f63f c0b9af6729b1c51ba7a387c5e95def80 e08d84ddcb01029d8ebfbe32dac1e4b4 216c8d87e3eed742e548502f9731637e f86deda11a526b80c0caf384a30202af b9692b4d201992f250739efdcba2831c cabc17ad4d83bd6045c42874fba74f21 019b0dfabd4da0f4ed2cad4bbb71df22 2c1878d2cab4f83c3ebea9f98568c79d 0700"
+  },
+  "parent": {
+    "height": 99,
+    "claimedId": "739dbaccd72255e068d98a74640d21ae 376f6c5c30b84c907d45e230ed3a4588",
+    "note": "The child blob's header must name this id — checked at capture and re-proven by the test.",
+    "doorReplay": {
+      "childBlobHexLength": 354,
+      "childServedTwice": true
+    }
+  }
+}

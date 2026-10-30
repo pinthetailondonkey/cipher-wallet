@@ -125,28 +125,32 @@ repository without weakening the scanner. Any future fixture containing a bare
 32-byte hex value follows the same pattern and records its source checksum
 here.
 
-## monero-block-mainnet.json, -b.json, -c.json
+## monero-block-*.json (five real blocks)
 
-Three real Monero mainnet blocks, bytes and ids taken from a monerod's own
+Five real Monero mainnet blocks, bytes and ids taken from a monerod's own
 `get_block` answers by `scripts/fetch-monero-block-fixture.mjs` — the same node
 door the wallet uses at runtime (`CIPHER_XMR_NODE`, the only override; no node
-list, no explorer, ever). All three were captured from
-`xmr-node.cakewallet.com:18081` through Tor
-(`curl --socks5-hostname` via `127.0.0.1:9050`), so the node never saw this
-machine, on 2026-10-30. The node answered `get_info` with no version string at
-all, at every ask; that silence is recorded in each file rather than papered
-over with a version the node did not give.
+list, no explorer, ever). All were captured from `xmr-node.cakewallet.com:18081`
+through Tor (`curl --socks5-hostname` via `127.0.0.1:9050`), so the node never
+saw this machine, on 2026-10-30. The node answered `get_info` with no version
+string at all, at every ask; that silence is recorded in each file rather than
+papered over with a version the node did not give.
 
 The blocks were chosen for what they prove together, not for being remarkable:
 
-    monero-block-mainnet.json    height 3795294, 6 transactions, tree of 7
-    monero-block-mainnet-b.json  height 3795284, 4 transactions, tree of 5
-    monero-block-mainnet-c.json  height 3795290, 0 transactions, tree of 1
+    monero-block-mainnet.json    height 3795294, 6 transactions, tree of 7, v2
+    monero-block-mainnet-b.json  height 3795284, 4 transactions, tree of 5, v2
+    monero-block-mainnet-c.json  height 3795290, 0 transactions, tree of 1, v2
+    monero-block-202612.json     height 202612, 513 transactions, v1 — the chain's one exception
+    monero-block-v1-early.json   height 100, 0 transactions, v1 — plain, unentangled
 
-Tree shapes 7, 5 and 1 are the branches Monero's tree hash has on this chain —
-the odd-count verbatim fold at 7 and 5, the single-hash tree at 1 — and the
-three blob lengths (1734, 357, 141 bytes) give the block id's length fold three
-witnesses instead of one. One pair can be a coincidence; three cannot.
+Counted per rule: the v2 rules have three witnesses — tree shapes 7, 5 and 1
+cover the branches Monero's tree hash produces, and three blob lengths give the
+block id's length fold three shots at being wrong. The v1 coinbase rule has
+two: block 100 is a plain pre-RingCT coinbase, and 202612 is the same rule
+inside the one block whose id Monero overrides — pinned so the exception's
+constants are proven by the bytes they bind, and so the one abnormality on the
+chain never testifies about itself alone.
 
 Each file carries: the block blob, the daemon's claimed id, previous id, miner
 transaction id and transaction-hash list, the parent's claimed id (the child's
@@ -157,6 +161,8 @@ Fixture sha256s, a space after character 32 as always:
     monero-block-mainnet.json    e79e6c9980d3607d2f5eba7cc535d2f8 9dd718e2a210499f7f77a4533199ce80
     monero-block-mainnet-b.json  370d1593ed040d9e4f2939ae5c1ac4f2 0910ba180e975c904154029f8250934f
     monero-block-mainnet-c.json  38ce6f663c86b77bd6009b49a45be8d7 7d467e24ad26730c6fd3c4363b3614ca
+    monero-block-202612.json     2edaa51cd8cdcfc089291d547bf2cb2c 68ee99ded59c7e131fadc29b2fd934a9
+    monero-block-v1-early.json   fc82a345957b613a46988cc50449ea30 0c16c6ad0e6cb1a646a106e7d7fe0d7a
 
 **One transformation, applied and visible:** every hex field — the blob
 included — is written with a space every 32 hex characters, per the settled
@@ -170,6 +176,8 @@ your call) and pin the same heights:
       node scripts/fetch-monero-block-fixture.mjs --height 3795294
     ... --height 3795284 --out test/fixtures/monero-block-mainnet-b.json
     ... --height 3795290 --out test/fixtures/monero-block-mainnet-c.json
+    ... --height 202612 --out test/fixtures/monero-block-202612.json
+    ... --height 100   --out test/fixtures/monero-block-v1-early.json
 
 A mined block never changes, so re-capture at these heights reproduces the same
 blob, ids and hash list byte for byte; only the capture metadata (tip, time)
