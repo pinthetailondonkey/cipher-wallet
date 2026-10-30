@@ -3,12 +3,16 @@
 // Three things are worth saying before the code, because this file is what a
 // reader trusts when the README is not open.
 //
-// It does not save bandwidth. walkBack fetches, hashes and merkle-checks every
-// block on the way back, so by the time this module sees a block its body is
+// scanBack does not save bandwidth. walkBack fetches, hashes and merkle-checks
+// every block on the way back, so by the time scanBack sees a block its body is
 // already in hand. The filter therefore decides what is REPORTED, not what is
-// FETCHED. Saving downloads needs header-first walking — getheaders and
-// getcfheaders, a body fetched only when its filter matched — which is the
-// BIP-157 shape and is not built here.
+// FETCHED.
+//
+// scanHeaderFirst, below, is the shape that saves the downloads: headers first,
+// a filter per block, and a body only when the filter matched. It is built and
+// measured, and it is NOT wired to a caller — it needs an anchor block that
+// nothing in this repo is allowed to choose. The cost of the saving is stated
+// there, and pinned by a test that prints both numbers.
 //
 // The filter is not an authority. What a block pays is read from the block,
 // after the walk has checked that it is the block that was asked for and that
@@ -35,13 +39,16 @@
 //
 // The limit, stated where it will be read: while every body is read, NO filter
 // — omitting our script or lying about it — can hide a payment. An omission
-// costs nothing visible; a lie costs one `quiet` entry and nothing else. The
-// moment header-first walking lands, an omission means the body is never
+// costs nothing visible; a lie costs one `quiet` entry and nothing else.
+//
+// With header-first, that stops being true: an omission means the body is never
 // fetched, and a pair of peers agreeing on the omission can hide a payment
-// outright.
+// outright. Measured, not argued: test/header-scan.test.mjs runs the same block
+// and the same script through both walks and prints the difference.
 
 import { matchesFilter } from './filters.js';
-import { walkBack } from './chain.js';
+import { verifyBlockBody } from './merkle.js';
+import { blockHash as hashOfBlock, walkBack, walkHeadersForward } from './chain.js';
 
 function sameBytes(a, b) {
   if (a.length !== b.length) return false;
@@ -126,4 +133,63 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, tipHash, tipHeig
   }
 
   return { payments, spent, quiet, unresolved, scanned: blocks.length };
+}
+
+// Header-first: walk headers from an anchor, ask each block's filter, and fetch
+// a body only when the filter matched.
+//
+// This is the BIP-157 shape, and it is the honest version of what scanBack's
+// header said was missing. It is also a weaker promise, and the header states
+// it rather than letting the saving speak for itself:
+//
+//   while every body is read (scanBack), no filter can hide a payment.
+//   here, a filter that omits our script is never contradicted — the block
+//   that would contradict it is never downloaded. The only trace is a body not
+//   fetched, which no honest caller can distinguish from a quiet block.
+//
+// So this function reports `skipped` explicitly, and nothing may treat that
+// list as evidence about a payment. What it does not do: it never reads spends,
+// so it cannot say whether a block SPENT our coin — only whether one paid us.
+// Resolving spends needs bodies that were not fetched, which is the same
+// tradeoff seen from the other side.
+//
+// The anchor is required by walkHeadersForward and has no default here either.
+export async function scanHeaderFirst({ fetchHeaders, fetchFilter, fetchBlock, peer, anchorHash, anchorHeight, tipHash = null, maxSteps = 2000, scripts = [] } = {}) {
+  if (typeof fetchFilter !== 'function') throw new Error('A scan needs a way to fetch a filter.');
+  if (typeof fetchBlock !== 'function') throw new Error('A scan needs a way to fetch a block.');
+  const wanted = (Array.isArray(scripts) ? scripts : []).filter((script) => script instanceof Uint8Array && script.length > 0);
+  if (wanted.length === 0) throw new Error('A scan with no scripts would learn nothing, and would still tell a peer we asked.');
+
+  const headers = await walkHeadersForward({ fetchHeaders, peer, anchorHash, anchorHeight, tipHash, maxSteps });
+
+  const payments = [];
+  const skipped = [];
+  let bodiesFetched = 0;
+
+  for (const { hash, height } of headers) {
+    const { filter } = await fetchFilter(peer, hash, { startHeight: height });
+    if (!wanted.some((script) => matchesFilter(filter, hash, script))) {
+      // Not evidence. A block that pays us and whose filter omits us lands here
+      // and is indistinguishable from a block that pays nobody.
+      skipped.push({ hash, height });
+      continue;
+    }
+    const { bytes } = await fetchBlock(peer, hash);
+    const actual = hashOfBlock(bytes);
+    if (actual !== hash) {
+      throw new Error(`That peer served block ${actual}, not ${hash}.`);
+    }
+    const body = verifyBlockBody(bytes);
+    bodiesFetched += 1;
+    body.transactions.forEach((tx, index) => {
+      const id = body.txids[index];
+      tx.outputs.forEach((output, vout) => {
+        if (wanted.some((script) => sameBytes(script, output.script))) {
+          payments.push({ blockHash: hash, txid: id, vout, value: output.value, script: output.script });
+        }
+      });
+    });
+  }
+
+  return { payments, skipped, bodiesFetched, scanned: headers.length };
 }

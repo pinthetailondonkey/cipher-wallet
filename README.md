@@ -161,12 +161,20 @@ chain's proof of work. A header's own work is not checked here, so a peer that
 mines a private header (or is handed one) can build a self-consistent block, and
 a short private chain of such blocks links and hashes cleanly.
 
-On the plan, named so it is not forgotten rather than discovered: header-first
-walking. Fetch the block headers and the filter headers, check the linkage, and
-download a body only when its filter matched — the BIP-157 shape, and what makes
-the filters save bandwidth. Until it lands, every block on a walk is downloaded
-and verified, and the cost of not having it is full-block bandwidth on every
-walk. `src/blockScan.js` is where it attaches.
+Header-first walking is built, and it is not wired. `walkHeadersForward` counts
+forward from an anchor, checking every link; `scanHeaderFirst` fetches a body
+only when its filter matched — the BIP-157 shape, and what makes the filters save
+bandwidth. It has no caller because it needs a block to start from and this
+repository is not allowed to choose one: the anchor is a required argument with
+no default, and the founder names a block by hand or the walk does not run.
+
+What the saving costs is measured rather than described, in
+`test/header-scan.test.mjs`: the same block and the same script, run through both
+walks. An honest filter finds the payment on either. A filter that omits our
+script finds it under the backwards walk, which reads every body, and loses it
+under header-first, which never downloads the block that would contradict the
+filter. Every walk in this wallet today is the backwards one; `scanBack` remains
+what a caller reaches for.
 
 Where that bites is specific, and worth naming rather than hedging: a filter
 lookup asks about a block hash the wallet already has, and the header must hash
