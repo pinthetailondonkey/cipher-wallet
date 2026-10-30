@@ -71,7 +71,7 @@ async function startPeer(answer) {
   const server = net.createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
-    socket.write(frame('version', encodeVersion({ nonce: 1n, services: 64n })));
+    socket.write(frame('version', encodeVersion({ nonce: 1n, services: 1n | 64n })));
     let buffered = new Uint8Array(0);
     socket.on('data', (chunk) => {
       const joined = new Uint8Array(buffered.length + chunk.length);

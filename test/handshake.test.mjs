@@ -21,6 +21,7 @@ const BLOCK = '11'.repeat(32);
 // connection ending.
 async function startPeer(script) {
   const sockets = new Set();
+  const seen = [];
   const server = net.createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
@@ -35,6 +36,7 @@ async function startPeer(script) {
         let message;
         try { message = decodeFrame(buffered); } catch { return; }
         buffered = buffered.slice(message.size);
+        seen.push(message.command);
         if (message.command === 'version') decodeVersion(message.payload);
         if (message.command === 'getcfilters') {
           // Two filters: the one asked for, and one that is not, so a test that
@@ -50,6 +52,7 @@ async function startPeer(script) {
   return {
     host: '127.0.0.1',
     port,
+    seen,
     close: () => new Promise((resolve) => { for (const s of sockets) s.destroy(); server.close(resolve); }),
   };
 }
@@ -159,6 +162,21 @@ test('a peer that never claimed compact filters is not asked for one', async () 
   try {
     await assert.rejects(client().fetchFilter(peer, BLOCK, { startHeight: 5 }), /does not say it serves compact filters/);
     console.log('[handshake] unadvertised filter service refused');
+  } finally {
+    await peer.close();
+  }
+});
+
+test('a peer that does not claim to serve the chain is not asked for a block', async () => {
+  // services 64 = NODE_COMPACT_FILTERS only. A peer can serve filters without
+  // claiming the full chain, and a getdata sent to it is a request it already
+  // said it would not answer. The bit was named in wire.js and never read, so
+  // this was refused by the timeout rather than by the claim.
+  const peer = await startPeer([['version', encodeVersion({ nonce: 7n, services: 64n })], ['verack', new Uint8Array()]]);
+  try {
+    await assert.rejects(client().fetchBlock(peer, BLOCK), /does not say it serves the whole chain/);
+    assert.equal(peer.seen.includes('getdata'), false, 'the block is not asked of a peer that cannot serve one');
+    console.log('[handshake] unadvertised chain service refused before getdata');
   } finally {
     await peer.close();
   }

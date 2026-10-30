@@ -19,6 +19,7 @@ import {
   FRAME_HEADER_SIZE,
   MAX_PAYLOAD,
   NODE_COMPACT_FILTERS,
+  NODE_NETWORK,
   PROTOCOL_VERSION,
   decodeCfilter,
   decodeFrame,
@@ -224,6 +225,13 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
   async function fetchBlock(peer, blockHash) {
     const asked = normalizeHash(blockHash);
     return withSession(peer, async (session) => {
+      // The other half of the pair the filter path already enforces. A peer
+      // that does not claim NODE_NETWORK has said it does not serve the chain,
+      // so a getdata sent to it is a question it has already declined — and the
+      // refusal used to arrive as a timeout, which reads as our fault.
+      if ((session.remote.services & NODE_NETWORK) === 0n) {
+        throw new Error('That peer does not say it serves the whole chain, so it is not asked for a block.');
+      }
       session.send('getdata', encodeGetData({ hash: asked }));
       for (;;) {
         const message = await session.nextAnswer();

@@ -48,7 +48,7 @@ async function startPeer(answer) {
     socket.on('close', () => sockets.delete(socket));
     // Nodes open with their version; the wallet replies with its own and a
     // verack, and this answers the wallet's version with a verack.
-    socket.write(frame('version', encodeVersion({ nonce: 1n, services: 64n })));
+    socket.write(frame('version', encodeVersion({ nonce: 1n, services: 1n | 64n })));
     let buffered = new Uint8Array(0);
     socket.on('data', (chunk) => {
       const joined = new Uint8Array(buffered.length + chunk.length);
