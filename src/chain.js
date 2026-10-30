@@ -51,6 +51,70 @@ export function blockConnects(previousBlock, block) {
   return headerConnects(blockHeader(previousBlock), block);
 }
 
+// Walk FORWARD through headers from an anchor, counting heights from it.
+//
+// getheaders only answers forwards: a locator names a block the wallet already
+// has, and a peer sends what comes after. So a header-first walk cannot be a
+// cheaper version of walkBack — it has to start somewhere this wallet already
+// believes, and that place is the anchor.
+//
+// `anchorHash` and `anchorHeight` are required and have no default. That is
+// deliberate, not an oversight: a pinned checkpoint is this wallet asserting
+// which chain is real, and no line of code here is allowed to make that choice.
+// The founder names a block by hand or this walk does not run.
+//
+// Heights are COUNTED from the anchor. A peer never supplies one, and a count
+// that would pass what four bytes hold is refused rather than wrapped — the
+// same bound the wire writers carry, checked before it can be written.
+export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, anchorHeight, tipHash = null, maxSteps = 2000, onHeader } = {}) {
+  if (typeof fetchHeaders !== 'function') throw new Error('A header walk needs a way to fetch headers.');
+  const anchor = String(anchorHash ?? '').trim().toLowerCase();
+  // Two refusals, two sentences. Sharing one sentence made the pair
+  // indistinguishable to a test — removing the hash check left the height check
+  // throwing the same words, and the mutation came back green.
+  if (!/^[0-9a-f]{64}$/.test(anchor)) {
+    throw new Error('A header walk starts from the hash of a block this wallet already trusts. There is no default anchor.');
+  }
+  if (!Number.isInteger(anchorHeight) || anchorHeight < 0) {
+    throw new Error('A header walk starts from the height the anchor sits at, so heights can be counted rather than believed.');
+  }
+  const tip = tipHash ? String(tipHash).trim().toLowerCase() : null;
+  if (tip && !/^[0-9a-f]{64}$/.test(tip)) throw new Error('A tip hash is 64 hex characters.');
+
+  const walked = [];
+  let previous = anchor;
+  let height = anchorHeight;
+  for (let step = 0; step < maxSteps; step += 1) {
+    const answer = await fetchHeaders(peer, {
+      locator: [previous],
+      stopHash: tip ?? '00'.repeat(64),
+    });
+    const headers = Array.isArray(answer?.headers) ? answer.headers : [];
+    if (headers.length === 0) {
+      if (tip) throw new Error(`The headers stopped short of ${tip}, so this walk did not reach the tip it was told to reach.`);
+      return walked;
+    }
+    for (const header of headers) {
+      // Counted before it is used: a height past 0xffffffff would wrap, and a
+      // wrapped height is the genesis question in another coat.
+      if (height + 1 > 0xffffffff) {
+        throw new Error('That walk counted past the highest height four bytes hold, so it stopped instead of wrapping.');
+      }
+      const hash = headerHash(header);
+      const parent = previousBlockHash(header);
+      if (parent !== previous) {
+        throw new Error(`Header ${hash} does not connect to ${previous}, so the chain this peer served has a gap.`);
+      }
+      height += 1;
+      walked.push({ hash, height, header });
+      await onHeader?.({ hash, height, header });
+      previous = hash;
+      if (tip && hash === tip) return walked;
+    }
+  }
+  throw new Error(`The walk did not reach a stop after ${maxSteps} header batches.`);
+}
+
 // Walk backwards from a tip hash, one block at a time, until `stopHash`,
 // `maxSteps`, or a link that does not hold. Every block is re-hashed and every
 // link is checked; the walk returns blocks newest first.
