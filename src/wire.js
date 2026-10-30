@@ -192,6 +192,81 @@ export function decodeCfilter(payload) {
   };
 }
 
+// getheaders: a protocol version, a locator of block hashes, and a stop hash.
+//
+// The locator is the FORWARD question. A peer answers with the headers that
+// come AFTER the first locator entry it recognises, oldest first — so this is
+// how a header-first walk starts: from a block the wallet already believes,
+// never from the tip it was handed. There is no backwards form of this message,
+// which is why header-first is a forward sync and not a cheaper walkBack.
+//
+// A locator with no entries is the genesis question in another coat: a node
+// will happily send its whole header chain. A locator longer than a node reads
+// is refused rather than sent, so this wallet cannot ask a question real
+// Bitcoin Core would truncate.
+export const MAX_LOCATOR = 101;
+
+export function encodeGetHeaders({ version = PROTOCOL_VERSION, locator = [], stopHash } = {}) {
+  const list = Array.isArray(locator) ? locator : [];
+  if (list.length === 0) {
+    throw new Error('A headers question needs at least one block hash to start from.');
+  }
+  if (list.length > MAX_LOCATOR) {
+    throw new Error(`A locator carries at most ${MAX_LOCATOR} block hashes.`);
+  }
+  const hashes = list.map((hash) => wireHash(String(hash).trim().toLowerCase()));
+  const stop = wireHash(String(stopHash ?? '00'.repeat(32)).trim().toLowerCase());
+  const count = encodeCompactSize(hashes.length);
+  const out = new Uint8Array(4 + count.length + 32 * hashes.length + 32);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, version, true);
+  out.set(count, 4);
+  let at = 4 + count.length;
+  for (const hash of hashes) { out.set(hash, at); at += 32; }
+  out.set(stop, at);
+  return out;
+}
+
+// headers: a count, then that many 80-byte headers, oldest first. The message
+// is all-or-nothing — a tail that does not fill a whole header is a refusal,
+// because a partly-read chain segment would be walked as if it were whole.
+export const SERIALIZED_HEADER_SIZE = 80;
+
+export function encodeHeaders(headers = []) {
+  const list = Array.isArray(headers) ? headers : [];
+  // Strict on purpose: a headers answer this wallet WRITES is only used by
+  // drills, and a wrong-length header there should be a refusal, not padding.
+  const count = encodeCompactSize(list.length);
+  const out = new Uint8Array(count.length + list.length * SERIALIZED_HEADER_SIZE);
+  out.set(count, 0);
+  let at = count.length;
+  for (const header of list) {
+    if (!(header instanceof Uint8Array) || header.length !== SERIALIZED_HEADER_SIZE) {
+      throw new Error('A block header is 80 bytes.');
+    }
+    out.set(header, at);
+    at += SERIALIZED_HEADER_SIZE;
+  }
+  return out;
+}
+
+export function decodeHeaders(payload) {
+  if (!(payload instanceof Uint8Array) || payload.length === 0) {
+    throw new Error('A headers message starts with a count.');
+  }
+  const count = readCanonicalVarint(payload, 0);
+  const at = count.offset;
+  const want = count.offset + Number(count.value) * SERIALIZED_HEADER_SIZE;
+  if (payload.length !== want) {
+    throw new Error('That headers answer is cut short: its count and its bytes disagree.');
+  }
+  const headers = [];
+  for (let i = 0; i < Number(count.value); i += 1) {
+    headers.push(payload.slice(at + i * SERIALIZED_HEADER_SIZE, at + (i + 1) * SERIALIZED_HEADER_SIZE));
+  }
+  return { headers };
+}
+
 // CompactSize: the same seven-bits-per-byte varint the rest of the protocol
 // uses, written here so a message can be built without reaching into tx.js.
 export function encodeCompactSize(value) {
