@@ -178,6 +178,46 @@ test('a walk that never reaches a stop refuses instead of looping', async () => 
   }
 });
 
+// F26. A walk's heights are a claim it was handed, not a proof: `tipHeight`
+// comes from a peer's own word. A chain longer than the height it started from
+// used to be numbered into the negatives, and the first thing that noticed was
+// the filter guard one module away — which blamed the block's filter for a
+// height the walk invented. Three blocks, walked from height 1.
+const { block: GRAND_BYTES, header: GRAND_HEADER } = blockWith(new Uint8Array(32), 6);
+const GRAND_HASH = blockHash(GRAND_BYTES);
+const { block: MID_BYTES, header: MID_HEADER } = blockWith(sha256d(GRAND_HEADER), 7);
+const MID_HASH = blockHash(MID_BYTES);
+const { block: TOP_BYTES } = blockWith(sha256d(MID_HEADER), 8);
+const TOP_HASH = blockHash(TOP_BYTES);
+const THREE = new Map([[TOP_HASH, TOP_BYTES], [MID_HASH, MID_BYTES], [GRAND_HASH, GRAND_BYTES]]);
+const serveFrom = (map) => async (_peer, asked) => {
+  const bytes = map.get(asked);
+  if (!bytes) throw new Error(`no such block ${asked}`);
+  return { bytes };
+};
+
+test('a walk that would count below zero refuses and names the walk, not the block’s filter', async () => {
+  const asked = [];
+  const counted = serveFrom(THREE);
+  const fetchBlock = (peer, hash) => { asked.push(hash); return counted(peer, hash); };
+  const message = await walkBack({ fetchBlock, peer: {}, tipHash: TOP_HASH, tipHeight: 1 })
+    .then(() => null, (error) => error.message);
+  assert.match(message, /That walk counted below the first block/);
+  // What did NOT happen: the walk stopped at the claim instead of numbering a
+  // block at minus one, and it never asked a peer for one more block after the
+  // claim ran out — so no block below the claim was ever fetched or numbered.
+  assert.equal(asked.length, 2, 'the walk stops when its own count runs out, it does not ask for a third block');
+  assert.doesNotMatch(message, /filter/i, 'the fault is the walk’s height, so nothing else may be blamed');
+  witness('F26', `chain of 3 walked from height 1`, `blocks asked ${asked.length}`, 'refused by the walk');
+});
+
+test('the same three-block chain walked from its true height reaches genesis and numbers nothing below zero', async () => {
+  const blocks = await walkBack({ fetchBlock: serveFrom(THREE), peer: {}, tipHash: TOP_HASH, tipHeight: 2 });
+  assert.deepEqual(blocks.map((b) => b.height), [2, 1, 0]);
+  assert.equal(previousBlockHash(blocks[2].bytes), '0'.repeat(64), 'the walk stops at genesis by its own zero parent');
+  witness('F26 positive control', `heights ${blocks.map((b) => b.height).join(', ')}`);
+});
+
 test('a hash that is not a hash is refused before any connection is opened', async () => {
   let opened = 0;
   const fetchBlock = async () => { opened += 1; return { bytes: new Uint8Array(0) }; };

@@ -122,6 +122,11 @@ export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, ancho
 // `fetchBlock(peer, hash)` is `client.fetchBlock` from peerClient.js: it returns
 // { bytes }. The hash check lives here rather than in the transport, because it
 // is this module that knows which block it asked for.
+//
+// `tipHeight` is a claim, not a proof: it is a peer's word about where the tip
+// sits, and nothing in a block's bytes says a height. So the count this walk
+// makes is only ever as true as the claim it started from, and a walk that
+// would number a block below the first one refuses by naming itself.
 export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash = null, maxSteps = 1000, onBlock } = {}) {
   if (typeof fetchBlock !== 'function') throw new Error('A walk needs a way to fetch a block.');
   const tip = String(tipHash ?? '').trim().toLowerCase();
@@ -138,6 +143,14 @@ export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash 
   let asked = tip;
   let previous = null;
   for (let step = 0; step < maxSteps; step += 1) {
+    // The height is the walk's own count from a claim it was handed, and a
+    // count that passes the first block is a claim that is not true. Stopped
+    // here, where the walk knows it invented the number, so the refusal names
+    // the walk — not the block's filter, one module away, where it used to
+    // surface as "that block has no filter".
+    if (tipHeight - step < 0) {
+      throw new Error('That walk counted below the first block, so the height it started from was not true. A height is a claim a peer made, and this walk stopped rather than number a block at minus one.');
+    }
     const { bytes } = await fetchBlock(peer, asked);
     const actual = blockHash(bytes);
     if (actual !== asked) {
