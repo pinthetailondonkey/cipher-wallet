@@ -124,3 +124,56 @@ after character 32 is the standing way to keep a published test vector in the
 repository without weakening the scanner. Any future fixture containing a bare
 32-byte hex value follows the same pattern and records its source checksum
 here.
+
+## monero-block-mainnet.json, -b.json, -c.json
+
+Three real Monero mainnet blocks, bytes and ids taken from a monerod's own
+`get_block` answers by `scripts/fetch-monero-block-fixture.mjs` — the same node
+door the wallet uses at runtime (`CIPHER_XMR_NODE`, the only override; no node
+list, no explorer, ever). All three were captured from
+`xmr-node.cakewallet.com:18081` through Tor
+(`curl --socks5-hostname` via `127.0.0.1:9050`), so the node never saw this
+machine, on 2026-10-30. The node answered `get_info` with no version string at
+all, at every ask; that silence is recorded in each file rather than papered
+over with a version the node did not give.
+
+The blocks were chosen for what they prove together, not for being remarkable:
+
+    monero-block-mainnet.json    height 3795294, 6 transactions, tree of 7
+    monero-block-mainnet-b.json  height 3795284, 4 transactions, tree of 5
+    monero-block-mainnet-c.json  height 3795290, 0 transactions, tree of 1
+
+Tree shapes 7, 5 and 1 are the branches Monero's tree hash has on this chain —
+the odd-count verbatim fold at 7 and 5, the single-hash tree at 1 — and the
+three blob lengths (1734, 357, 141 bytes) give the block id's length fold three
+witnesses instead of one. One pair can be a coincidence; three cannot.
+
+Each file carries: the block blob, the daemon's claimed id, previous id, miner
+transaction id and transaction-hash list, the parent's claimed id (the child's
+header must name it — Monero's own chain rule, checked at capture and re-proven
+by the test), the daemon's nettype and tip at capture, and the transport used.
+Fixture sha256s, a space after character 32 as always:
+
+    monero-block-mainnet.json    e79e6c9980d3607d2f5eba7cc535d2f8 9dd718e2a210499f7f77a4533199ce80
+    monero-block-mainnet-b.json  370d1593ed040d9e4f2939ae5c1ac4f2 0910ba180e975c904154029f8250934f
+    monero-block-mainnet-c.json  38ce6f663c86b77bd6009b49a45be8d7 7d467e24ad26730c6fd3c4363b3614ca
+
+**One transformation, applied and visible:** every hex field — the blob
+included — is written with a space every 32 hex characters, per the settled
+policy above. Nothing else is transformed; the bytes are the daemon's own, and
+`test/monero-block.test.mjs` strips whitespace before use.
+
+To re-derive, point the capture script at any mainnet node (through Tor or not,
+your call) and pin the same heights:
+
+    CIPHER_XMR_NODE=<host:port> CIPHER_TOR_SOCKS=127.0.0.1:9050 \
+      node scripts/fetch-monero-block-fixture.mjs --height 3795294
+    ... --height 3795284 --out test/fixtures/monero-block-mainnet-b.json
+    ... --height 3795290 --out test/fixtures/monero-block-mainnet-c.json
+
+A mined block never changes, so re-capture at these heights reproduces the same
+blob, ids and hash list byte for byte; only the capture metadata (tip, time)
+moves. The daemon's claims are recorded as a stranger's claims: what these
+fixtures pin is the bytes, and the proof that the ids belong to those bytes is
+this repository's own parser in `test/monero-block.test.mjs`, which computes
+each id from the blob and refuses any disagreement.

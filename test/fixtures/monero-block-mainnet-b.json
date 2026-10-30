@@ -1,0 +1,37 @@
+{
+  "source": {
+    "what": "One real Monero mainnet block, as a monerod served it over json_rpc get_block.",
+    "node": "xmr-node.cakewallet.com:18081",
+    "daemonVersion": "the node answered get_info with no version string",
+    "nettype": "mainnet",
+    "tipHeightAtCapture": 3795311,
+    "capturedAt": "2026-10-30T09:54:25.143Z",
+    "transport": "curl --socks5-hostname via 127.0.0.1:9050 (Tor; the node saw a Tor exit, not this machine)",
+    "rederive": "CIPHER_XMR_NODE=<node:port> CIPHER_TOR_SOCKS=127.0.0.1:9050 node scripts/fetch-monero-block-fixture.mjs --height <height>",
+    "note": "The node is a stranger's server and its claims are recorded as claims. What the fixture pins is the bytes; the id and the chain link are proven by this repository's own parser in test/monero-block.test.mjs, against the id recorded here."
+  },
+  "block": {
+    "height": 3795284,
+    "majorVersion": 16,
+    "minorVersion": 16,
+    "claimedId": "848ae377cb6365635212fc114c948b9f c86271733b617ad0c83f8e7cbd26b4bc",
+    "claimedPrevId": "24dfac33843c011a444522927f783406 32a2ad68b66fce115bb052c2d638a1ee",
+    "claimedMinerTxId": "30c4fcc0a1763bc5068b4358db8fe0ca 54694286bb64f92ef9c821f314ea9473",
+    "claimedTxHashes": [
+      "0440cdb0d30e86b6721a99bb9ba3be69 1e404f68c7ed60a870ec56d41205b56b",
+      "164c36e39c75eb831b1f17a18c386503 c6ae0583adb6014a45927731c97e6fe7",
+      "f627910815756deff4e2ef93a5b55dc9 373e23eb0ff62f9ddad1966d193789ca",
+      "a54548e306e327643d2e5d1c066e53cc cc4fc79c220d41362b0aef1263431166"
+    ],
+    "blob": "1010c1b491d70624dfac33843c011a44 4522927f78340632a2ad68b66fce115b b052c2d638a1eef50e1efe0290d3e701 01ffd4d2e70101809ed2b2bd1103affd 677217d36ad78a0d94747e4aff1ef67f ac648e665bd44e462dadcb971d6bf482 010321000f4ad465ff72cd5bff9676af b670ad82873a14225ba236bc3d4a65fb d738c93101847221eda83a7dc583276d 6d50c15d43b475e8992f445a2e08eed2 a7c2b63f72023c000018d9a93f73cb00 00000000000000000000000000000000 00000000000000000000000000000000 00000000000000000000000000000000 00000000040440cdb0d30e86b6721a99 bb9ba3be691e404f68c7ed60a870ec56 d41205b56b164c36e39c75eb831b1f17 a18c386503c6ae0583adb6014a459277 31c97e6fe7f627910815756deff4e2ef 93a5b55dc9373e23eb0ff62f9ddad196 6d193789caa54548e306e327643d2e5d 1c066e53cccc4fc79c220d41362b0aef 1263431166"
+  },
+  "parent": {
+    "height": 3795283,
+    "claimedId": "24dfac33843c011a444522927f783406 32a2ad68b66fce115bb052c2d638a1ee",
+    "note": "The child blob's header must name this id — checked at capture and re-proven by the test.",
+    "doorReplay": {
+      "childBlobHexLength": 357,
+      "childServedTwice": true
+    }
+  }
+}

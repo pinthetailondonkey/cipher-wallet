@@ -1,0 +1,32 @@
+{
+  "source": {
+    "what": "One real Monero mainnet block, as a monerod served it over json_rpc get_block.",
+    "node": "xmr-node.cakewallet.com:18081",
+    "daemonVersion": "the node answered get_info with no version string",
+    "nettype": "mainnet",
+    "tipHeightAtCapture": 3795311,
+    "capturedAt": "2026-10-30T09:54:34.311Z",
+    "transport": "curl --socks5-hostname via 127.0.0.1:9050 (Tor; the node saw a Tor exit, not this machine)",
+    "rederive": "CIPHER_XMR_NODE=<node:port> CIPHER_TOR_SOCKS=127.0.0.1:9050 node scripts/fetch-monero-block-fixture.mjs --height <height>",
+    "note": "The node is a stranger's server and its claims are recorded as claims. What the fixture pins is the bytes; the id and the chain link are proven by this repository's own parser in test/monero-block.test.mjs, against the id recorded here."
+  },
+  "block": {
+    "height": 3795290,
+    "majorVersion": 16,
+    "minorVersion": 16,
+    "claimedId": "fc39a116b90b56da087aa3a4586a9a36 bf8021ae519698e5f6f6b2e33d8f830b",
+    "claimedPrevId": "9f1a3735434cec9b6c6083af29d8515e 59d894e921c263eb67417472b794c32b",
+    "claimedMinerTxId": "23d7663de4a096e2ab0bdcd3b5d3f547 6945318617bfd58ef1dc26ec2dfdd3eb",
+    "claimedTxHashes": [],
+    "blob": "1010a9ba91d7069f1a3735434cec9b6c 6083af29d8515e59d894e921c263eb67 417472b794c32b802000000296d3e701 01ffdad2e7010180e0a596bb1103d724 b95942cb8821f48ce4a6d9084c404518 7c19d7440c2c480ec937a29558496e2b 012dd7ef976eaaa670130035589fe3f0 7bd6ce8a598c9c91ac85d01fe5637d13 31020832846a87820900000000"
+  },
+  "parent": {
+    "height": 3795289,
+    "claimedId": "9f1a3735434cec9b6c6083af29d8515e 59d894e921c263eb67417472b794c32b",
+    "note": "The child blob's header must name this id — checked at capture and re-proven by the test.",
+    "doorReplay": {
+      "childBlobHexLength": 141,
+      "childServedTwice": true
+    }
+  }
+}
