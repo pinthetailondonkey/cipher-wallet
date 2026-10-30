@@ -51,8 +51,21 @@ test. The matching rule for spotting an output that is ours is built
 (`src/monero/scan.js`) and tested against locally built transactions. RingCT
 amounts now decrypt (`src/monero/ringct.js`), but they are pinned only to
 keccak's vectors and Monero's varint, not to a real transaction, so nothing may
-gate a payment on them yet. What is not built: reading real Monero blocks from a
-node, and anything that spends or broadcasts. Nothing on the Monero side has been
+gate a payment on them yet.
+
+Reading a block is now built as far as it can be without a real sample.
+`src/monero/block.js` parses a block blob strictly, and `src/monero/nodeClient.js`
+fetches one from a node, refusing every answer it cannot frame. Two limits are
+load-bearing, and each is written where a caller meets it rather than only here:
+the parser **does not prove a block's identity** — that rule needs one real
+(bytes, hash) pair, and pinning our own writer's output would prove only that our
+arithmetic agrees with itself — and it **frames only RingCT type 0**, so every
+encrypted transaction is refused rather than guessed at, because a wrong proof
+size would silently shift every following transaction. In plain words: this build
+can read a block but cannot yet say a block is the one it asked for, and it
+refuses every modern mainnet block. Nothing it returns may gate a payment. What
+is not built: wiring a parsed block into a pocket scan, and anything that spends
+or broadcasts. Nothing on the Monero side has been
 funded or touched mainnet.
 
 The transport for reading blocks is ruled: a shipped list of public nodes in
