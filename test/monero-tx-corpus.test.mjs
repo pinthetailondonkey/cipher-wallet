@@ -42,14 +42,15 @@ for (const file of fixtureFiles) {
   // change the computed id or make the read refuse — never keep the node's id,
   // which would mean the id ignores that section.
   const probe = (() => { const tx = readTransaction(BYTES, 0, 'probe'); return tx; })();
-  const prefixStart = 0;
-  const baseStart = probe.prefixEnd;
-  const baseStop = probe.baseEnd;
-  const prunableStart = probe.baseEnd;
-  const inBase = (baseStop - baseStart) > 4 ? baseStart + 3 : baseStart;
-  const inPrunable = (BYTES.length - prunableStart) > 4 ? prunableStart + 3 : prunableStart;
+  const bounds = {
+    prefix: { start: 0, end: probe.prefixEnd, name: 'prefix' },
+    base: { start: probe.prefixEnd, end: probe.baseEnd, name: 'base' },
+    prunable: { start: probe.baseEnd, end: BYTES.length, name: 'prunable' },
+  };
+  const inBase = probe.baseEnd - probe.prefixEnd > 4 ? probe.prefixEnd + 3 : probe.prefixEnd;
+  const inPrunable = BYTES.length - probe.baseEnd > 4 ? probe.baseEnd + 3 : probe.baseEnd;
   const sectionOffsets = {
-    prefix: prefixStart + 10 < probe.prefixEnd ? prefixStart + 10 : prefixStart,
+    prefix: probe.prefixEnd > 10 ? 10 : 0, // well inside the input/output list
     base: inBase,
     prunable: inPrunable,
     tail: BYTES.length - 1,
@@ -57,7 +58,15 @@ for (const file of fixtureFiles) {
 
   for (const [kind, at] of Object.entries(sectionOffsets)) {
     test(`control ${file} [${kind}]: a flipped byte at ${at} changes the id or is refused (${label})`, () => {
-      if (at < 0 || at >= BYTES.length) { assert.ok(true, `offset ${at} clamped to valid range`); return; }
+      if (at < 0 || at >= BYTES.length) { assert.fail(`offset ${at} outside fixture bytes`); }
+      // A prefix/base/prunable flip must land strictly inside its named
+      // section, so the control's name matches the bytes it flips. Tail is
+      // the final byte.
+      if (kind !== 'tail') {
+        const r = bounds[kind];
+        assert.ok(at >= r.start && at < r.end,
+          `a ${kind} control must flip a byte inside [${r.start}, ${r.end}), got ${at}`);
+      }
       const copy = Uint8Array.from(BYTES);
       copy[at] ^= 0x01;
       let outcome;
