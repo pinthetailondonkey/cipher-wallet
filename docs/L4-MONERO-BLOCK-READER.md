@@ -68,12 +68,38 @@ output, pinned with provenance. That is what happened next.
   `result.json?.block_header`, which never fires against the string a real
   daemon sends, and its test passed `json` as an object — the same
   fixture-writer's trap, in the door. A pinned real answer now serves the
-  suite: a lying hash or height throws. The rest held in review: a deadline
+  suite: a lying hash or height throws. It also returns the block's own
+  transaction hash list (`txHashes`) from the daemon's parsed copy, checked
+  against `num_txes`; the previous reader dropped it, so a scan built on
+  `getBlock` was blind. The rest held in review: a deadline
   that runs through the body read, another host refused, non-2xx refused, not
   JSON refused, wrong network refused, still syncing refused, one pinned node
   per scan. One known minor stands: `sameHost` drops a default `:80` from
   `response.url` while `cleanNode` keeps it, so a `:80` node is refused —
   fail-closed, and worth knowing rather than fixing in a hurry.
+- `readTransaction(...)` — the same reader that serves the block's miner
+  slot is now also callable for a NON-miner transaction. A version 2 RingCT
+  type 6 (Bulletproof+/CLSAG) transaction is read and its id proven from its
+  bytes alone; the node's `tx_hash` and `prunable_hash` are never trusted.
+  This is reads-only: the base is skimmed (fee, one eight-byte amount per
+  output, one commitment per output) and never amount-decoded, and no scan or
+  spend path uses it. The block's miner slot is unchanged: a miner transaction
+  of any non-Null RingCT type is still refused by name.
+
+## The non-miner transaction read, red-first
+
+The type-6 needle test —
+`THE NEEDLE: the real RingCT type 6 transaction reads, and its id is the
+node's tx_hash` — was written first and failed against the then-current
+reader with the refusal it names:
+`That fixture transaction carries RingCT type 6. Every miner transaction
+Monero has mined since RingCT is type Null ... deliberately refused read`. The
+refusal was the red state; the same failing assertion, against the pre-fix
+reader, is in this repository's own `test/monero-tx-read.test.mjs` history. The
+green commit then made it pass and added four mutated-bytes controls that flip
+one byte in the real bytes — prefix, base, prunable, and prunable tail — each
+forcing an id change or a refusal, so the id is proven to depend on every
+section and on nothing the node claimed.
 
 ## The tests, and the one that matters
 
@@ -97,9 +123,11 @@ the dead check before the fix, by name.
 
 ## What this page does not claim
 
-- It does not claim the reader reads transactions beyond the miner's. It reads
-  blocks: the miner transaction and the hashes of the rest. Reading the
-  transactions themselves is later work with its own pinned pairs.
+- It does not claim the reader reads transactions broadly. It reads the block's
+  miner transaction and, on its own, one pinned non-miner RingCT type 6
+  transaction whose id is proven from its bytes. It does not read other
+  transaction types or amounts, and a scan that must identify a non-miner
+  transaction before decoding it is still later work.
 - It does not claim the node client is a chain reader. It fetches bytes and
   cross-checks the daemon's cheap claims; the identity is proven from the
   bytes.
