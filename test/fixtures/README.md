@@ -213,3 +213,34 @@ checks the two agree. The blob and ids equal
 `monero-block-mainnet.json` exactly, which is the re-derivation check for this
 file — a raw answer carries `depth`, which moves with the tip, so the raw
 bytes are not expected to hash the same twice.
+
+## monero-tx-ringct-type6.json
+
+One real Monero mainnet NON-MINER transaction: version 2, RingCT type 6
+(Bulletproof+ with CLSAG), 2220 bytes, id
+
+    ed77f05e2a61c2a636e3923e7bb50a4f 8fc16a3fe7f3c4a408f3c9849fa4abbc
+
+It sits at index 0 of block 3796965, whose hash is
+
+    1777215e7b0758dced972b7191c2f2d2 6e22fd6212d38893d5fac05dffec1a99
+
+The block has 33 transactions. Captured 2026-11-01 from
+`xmr-node.cakewallet.com:18081` through Tor (`curl --socks5-hostname` via
+`127.0.0.1:9050`): `get_block` for the block and its `tx_hashes`, then REST
+`/get_transactions` for this id. The node's own claims (`tx_hash`,
+`prunable_hash`) are recorded as claims and never trusted by the parser.
+
+The file's own sha256, spaced as always:
+
+    1c6c2da45d930cc3dc0a3442a27ab0f8 bbe08bfb80a4f9b3e10734ff649bf47c
+
+**Transformations, visible:** `asHex`, `txHash`, `blockHash` and
+`claimedPrunableHash` carry a space every 32 hex characters, per the settled
+policy above. The test strips whitespace before use. Nothing else is changed.
+
+What this fixture pins is the BYTES. The id is proven by this repository's
+parser from those bytes alone, in `test/monero-tx-read.test.mjs`.
+
+Re-derive: fetch block 3796965 and the transaction as above, and check the
+sha256 of the bytes against `source.blockHash` and `txHash`.
