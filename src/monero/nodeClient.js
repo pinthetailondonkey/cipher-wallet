@@ -130,6 +130,27 @@ export async function getInfo(node, { expectNetwork = 'mainnet', ...options } = 
   return { address, height, targetHeight: Number.isInteger(target) ? target : null, nettype: result.nettype ?? null };
 }
 
+// The daemon's transaction hash list for a block, read from its parsed copy.
+// A missing list is a failed read, not an empty block: a block with no list
+// the wallet can see is one it cannot scan, so it is refused by name.
+function readTxHashes(result, address, claimed) {
+  let parsed = result.json;
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch {
+      throw new Error(`The Monero node ${address} sent a parsed block that is not JSON. This is a failed read.`);
+    }
+  }
+  const list = parsed?.tx_hashes;
+  if (!Array.isArray(list) || list.some((h) => !HEX64.test(String(h).toLowerCase()))) {
+    throw new Error(`The Monero node ${address} answered without a transaction hash list this build can read.`);
+  }
+  const hashes = list.map((h) => String(h).toLowerCase());
+  if (claimed && claimed.num_txes !== undefined && Number(claimed.num_txes) !== hashes.length) {
+    throw new Error(`The Monero node ${address} said the block holds ${claimed.num_txes} transactions and listed ${hashes.length}.`);
+  }
+  return hashes;
+}
+
 // One block, by hash or by height, exactly one of the two.
 export async function getBlock(node, { hash, height } = {}, { pool = null, ...options } = {}) {
   const byHash = hash !== undefined;
@@ -161,7 +182,8 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
   // catch, and never a proof: the block's identity is settled by block.js,
   // which proves the id from the bytes themselves. The claims sit at the TOP
   // LEVEL of the answer, in block_header — the daemon's parsed copy rides
-  // beside them as a STRING in `json`, for humans, and is never read here.
+  // beside them as a STRING in `json`. The only thing read from `json` is the
+  // transaction hash list, a claim checked against num_txes (readTxHashes).
   // This once read `result.json?.block_header`, an object lookup that never
   // fires against the string a real daemon sends, so the check below was dead
   // while its test stayed green; the fix is proven against a real answer
@@ -176,6 +198,13 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
     }
   }
 
+  // The transaction hash list rides in the daemon's parsed copy (`json`, an
+  // object in the pinned answer, a string in some answers). It is a CLAIM about
+  // which transactions the block holds: each entry must be a 64-hex id, and the
+  // count must equal the daemon's own num_txes. Nothing here proves an id; a
+  // scan that needs a transaction fetches it and proves it from its bytes.
+  const claimedTxHashes = readTxHashes(result, address, claimed);
+
   return {
     blob,
     address,
@@ -184,5 +213,6 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
     claimedHash: claimed?.hash ? String(claimed.hash).toLowerCase() : null,
     claimedHeight: claimed && claimed.height !== undefined ? Number(claimed.height) : null,
     claimedPrevHash: claimed?.prev_hash ? String(claimed.prev_hash).toLowerCase() : null,
+    txHashes: claimedTxHashes,
   };
 }

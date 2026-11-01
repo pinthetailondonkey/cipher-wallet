@@ -121,7 +121,9 @@ function realRpc() {
   const header = r.block_header;
   return rpc({
     blob: squeeze(r.blob),
-    json: JSON.stringify(r.json), // a real daemon sends a string; so does this
+    // A real daemon sends a string; so does this. The fixture's hex carries the
+    // policy space every 32 characters, so the hash list is squeezed too.
+    json: JSON.stringify({ ...r.json, tx_hashes: r.json.tx_hashes.map(squeeze) }),
     block_header: {
       ...header,
       hash: squeeze(header.hash),
@@ -159,6 +161,25 @@ test('a real daemon answer asked by its own height passes the check and carries 
   assert.equal(served.claimedPrevHash, squeeze(REAL_ANSWER.result.block_header.prev_hash));
   assert.equal(served.blob.length * 2, squeeze(REAL_ANSWER.result.blob).length, 'the blob comes home whole');
   witness('real-shape agreement', 'the claims are carried home, not dropped');
+});
+
+// The transaction hash list is what a scan needs to find a transaction in a
+// block. The daemon sends it inside its parsed copy (`json`, an object in the
+// pinned answer), and the claim `num_txes` names how many there should be. The
+// fixture's list is checked against the mainnet block fixture's own list, which
+// was captured separately from the same chain.
+test('a real daemon answer carries its transaction hash list home, and the count matches num_txes', async () => {
+  const served = await getBlock(
+    NODE,
+    { height: REAL_ANSWER.result.block_header.height },
+    { fetchImpl: async () => realRpc() },
+  );
+  const expected = REAL_ANSWER.result.json.tx_hashes.map((h) => squeeze(h));
+  assert.ok(Array.isArray(served.txHashes), 'the hash list comes home as a list');
+  assert.equal(served.txHashes.length, REAL_ANSWER.result.block_header.num_txes, 'the list is as long as the node claims');
+  assert.deepEqual(served.txHashes, expected, 'the list is the node\'s own list, in the node\'s order');
+  for (const h of served.txHashes) assert.match(h, /^[0-9a-f]{64}$/, 'each entry is a 64-hex transaction id');
+  witness('tx_hashes', `${served.txHashes.length} hashes, count equal to num_txes`);
 });
 
 test('asking by both hash and height, or by neither, is refused before any request is made', async () => {

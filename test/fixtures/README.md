@@ -205,8 +205,11 @@ Fixture sha256, spaced as always:
 **Transformations, visible:** every hex field of 64 characters or more carries
 a space every 32 characters, and `json` is stored PARSED and re-stringified by
 the test when serving — a real daemon sends it as a string and the client must
-meet it as one. The `json` contents are spaced too and are never read by the
-client; what is pinned is the shape, not the payload. The blob and ids equal
+meet it as one. The `json` contents are spaced too. The client reads exactly one
+thing from them: `tx_hashes`, the block's transaction list, which it checks
+against `num_txes` and carries home as `txHashes`. Those hashes are the
+block's own list, the same list `monero-block-mainnet.json` pins; the test
+checks the two agree. The blob and ids equal
 `monero-block-mainnet.json` exactly, which is the re-derivation check for this
 file — a raw answer carries `depth`, which moves with the tip, so the raw
 bytes are not expected to hash the same twice.
