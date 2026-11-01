@@ -45,8 +45,12 @@
 //     this repository has pinned bytes to prove. Every block's miner slot
 //     holds a coinbase, so nothing legitimate is turned away.
 //   - a version 2 miner transaction whose RingCT type is not Null. Every real
-//     coinbase is Null; another type would mean walking a prunable section,
-//     and emitting a guessed id is never allowed while emitting none is.
+//     coinbase is Null, so the block's miner slot takes nothing else. A
+//     non-miner transaction of RingCT type 6 is read on its own, from its
+//     bytes, and its id is proven from those bytes (readTransaction). No
+//     block is built on that read. Any other type is refused everywhere,
+//     because it would mean walking a prunable section this build does not
+//     read, and emitting a guessed id is never allowed while emitting none is.
 //   - a block whose walk does not end at the last byte. Trailing bytes are a
 //     framing lie — and the layout this repository once shipped by mistake
 //     would leave exactly that behind.
@@ -220,15 +224,35 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
   // behind a generated input, so a v1 coinbase ends at its prefix.
   let rctType = null;
   let baseEnd = prefixEnd;
+  let prunableEnd = null;
   if (version === 2n) {
     const read = cursor.varint('ringct type');
-    if (read !== 0n) {
+    if (read === 6n && label !== 'miner transaction') {
+      // RingCT type 6 (Bulletproof+ with CLSAG). The base is the fee, one
+      // eight-byte amount per output and one commitment per output; the
+      // prunable section is walked below from the bytes, exactly as
+      // serialize_rctsig_base and serialize_rctsig_prunable write them.
+      rctType = 6;
+      cursor.varint('ringct fee');
+      for (let i = 0; i < outputCount; i += 1) cursor.take(8, `output ${i} ecdh amount`);
+      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      baseEnd = cursor.at;
+      // Every input of one transaction spans the same ring, so the first
+      // input's key-offset count is the ring size; a CLSAG carries one scalar
+      // per ring member.
+      const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
+      if (inputCount < 1 || ringSize < 1) {
+        throw new Error(`That ${label} is RingCT type 6 without a key input to sign, so this build does not read it.`);
+      }
+      prunableEnd = walkType6Prunable(cursor, inputCount, outputCount, ringSize);
+    } else if (read !== 0n) {
       throw new Error(
         `That ${label} carries RingCT type ${read}. Every miner transaction Monero has mined since RingCT is type Null, so another type means a prunable section this build refuses to guess its way through. This is a refused read, not a finding.`,
       );
+    } else {
+      rctType = 0;
+      baseEnd = cursor.at;
     }
-    rctType = 0;
-    baseEnd = cursor.at;
   }
 
   const coinbase = inputCount === 1 && inputs[0]?.kind === 'gen';
@@ -244,10 +268,43 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
     start,
     prefixEnd,
     baseEnd,
-    end: baseEnd,
+    end: prunableEnd ?? baseEnd,
     prefixBytes: bytes.slice(start, prefixEnd),
     baseBytes: bytes.slice(prefixEnd, baseEnd),
+    prunableBytes: prunableEnd === null ? null : bytes.slice(baseEnd, prunableEnd),
   };
+}
+
+// The type 6 prunable section, walked from the bytes in Monero's own order
+// (serialize_rctsig_prunable, src/ringct/rctTypes.h at the pinned commit): a
+// count of Bulletproof+ proofs, each proof's six fixed keys then its L and R
+// vectors, each count-prefixed; then one CLSAG per input, its ring scalars
+// (mixin + 1 of them, the mixin being the ring size less one), c1 and D, with
+// no count prefix because the ring size is fixed by the inputs; then one
+// pseudo-output key per input. Returns the offset where the section ends.
+// A count that runs past the bytes is refused where it is cut.
+function walkType6Prunable(cursor, inputCount, outputCount, ringSize) {
+  const bpCount = Number(cursor.varint('bulletproof plus count'));
+  if (bpCount > outputCount) {
+    throw new Error('That transaction carries more Bulletproof+ proofs than outputs, which Monero refuses.');
+  }
+  for (let p = 0; p < bpCount; p += 1) {
+    cursor.take(32 * 6, `Bulletproof+ ${p} fixed fields`);
+    const left = Number(cursor.varint(`Bulletproof+ ${p} L count`));
+    cursor.take(32 * left, `Bulletproof+ ${p} L`);
+    const right = Number(cursor.varint(`Bulletproof+ ${p} R count`));
+    cursor.take(32 * right, `Bulletproof+ ${p} R`);
+  }
+  // One CLSAG per input: ring scalars, then c1, then D. No count prefix,
+  // because the ring size is fixed by the transaction's own inputs.
+  for (let i = 0; i < inputCount; i += 1) {
+    cursor.take(32 * ringSize, `input ${i} CLSAG scalars`);
+    cursor.take(32, `input ${i} CLSAG c1`);
+    cursor.take(32, `input ${i} CLSAG D`);
+  }
+  // One pseudo-output commitment per input.
+  cursor.take(32 * inputCount, 'pseudo-output commitments');
+  return cursor.at;
 }
 
 // The transaction id, by version, byte for byte. Version 2: each section
@@ -262,7 +319,10 @@ export function transactionIdOf(tx) {
   if (tx.version === 1) {
     return hex.encode(keccak(tx.prefixBytes));
   }
-  const prunable = new Uint8Array(32);
+  // A Null transaction has no prunable section, so its prunable hash is the
+  // null hash, 32 zero bytes. A type 6 transaction hashes the section's own
+  // bytes, as calculate_transaction_hash does for any non-Null prunable.
+  const prunable = tx.prunableBytes ? keccak(tx.prunableBytes) : new Uint8Array(32);
   return hex.encode(keccak(concat(keccak(tx.prefixBytes), keccak(tx.baseBytes), prunable)));
 }
 
