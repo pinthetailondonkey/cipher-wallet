@@ -270,3 +270,26 @@ characters; the test strips whitespace before use. The id is proven from the
 bytes alone by `test/monero-tx-corpus.test.mjs`, which runs the needle and the
 four mutated-bytes controls (prefix, base, prunable, tail) on every
 `monero-tx-*.json` fixture.
+
+## monero-tx-manyin.json
+
+One real Monero mainnet NON-MINER transaction: version 2, RingCT type 6
+(Bulletproof+ with CLSAG), 19407 bytes, 27 inputs and 2 outputs, id
+
+    97cbc8f9d80ceffcb985ba12205e8896 67c2a0c95adb0b36f619e9b78c17d20a
+
+It sits at index 2 of block 3796992 (4 transactions), captured 2026-11-01
+from `xmr-node.cakewallet.com:18081` through Tor via
+`scripts/fetch-monero-tx-fixture.mjs --shape manyin`. Same provenance block
+as the other Lane A fixtures.
+
+This is the Lane A corpus shape "many inputs (3+)". The node's claims are
+recorded and never trusted; the id is proven from the bytes alone.
+
+The file's own sha256, spaced as always:
+
+    004d5e96c2b983c51dde8d2c4fe3352f 22706ba7e6b2630b10de1c3f48d07f0c
+
+Id and controls are proven by `test/monero-tx-corpus.test.mjs`, which runs
+the needle and the four mutated-bytes controls on every `monero-tx-*.json`
+fixture.
