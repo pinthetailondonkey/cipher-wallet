@@ -244,3 +244,29 @@ parser from those bytes alone, in `test/monero-tx-read.test.mjs`.
 
 Re-derive: fetch block 3796965 and the transaction as above, and check the
 sha256 of the bytes against `source.blockHash` and `txHash`.
+
+## monero-tx-1in-manyout.json
+
+One real Monero mainnet NON-MINER transaction: version 2, RingCT type 6
+(Bulletproof+ with CLSAG), 1535 bytes, 1 input and 2 outputs, id
+
+    4ab654156cd0f2b0cb576c14e2653c5a c328ba8f6fc1841ef10897d34bbe2021
+
+It sits at index 1 of block 3796965 (33 transactions), captured 2026-11-01
+from `xmr-node.cakewallet.com:18081` through Tor via
+`scripts/fetch-monero-tx-fixture.mjs --shape 1in-manyout`. Same provenance
+block as `monero-tx-ringct-type6.json`: `get_block` for the block and its
+`tx_hashes`, then REST `/get_transactions` for this id.
+
+This is the Lane A corpus shape "1 input / many outputs". The node's claims
+(`tx_hash`, `prunable_hash`) are recorded as claims and never trusted.
+
+The file's own sha256, spaced as always:
+
+    9ceaf363aeeb7290e55d62368f21d662 cb124528e531a87de95bb6a6f5705538
+
+**Transformations, visible:** every hex field carries a space every 32 hex
+characters; the test strips whitespace before use. The id is proven from the
+bytes alone by `test/monero-tx-corpus.test.mjs`, which runs the needle and the
+four mutated-bytes controls (prefix, base, prunable, tail) on every
+`monero-tx-*.json` fixture.
