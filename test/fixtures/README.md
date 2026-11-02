@@ -293,3 +293,50 @@ The file's own sha256, spaced as always:
 Id and controls are proven by `test/monero-tx-corpus.test.mjs`, which runs
 the needle and the four mutated-bytes controls on every `monero-tx-*.json`
 fixture.
+
+## monero-tx-type3-1in.json
+
+One real Monero mainnet NON-MINER transaction: version 2, RingCT type 3
+(RCTTypeBulletproof: a Bulletproof1 range proof with an MLSAG), 1911 bytes, 1
+input and 2 outputs, id
+
+    37c26ae22cd23ebb5d1333aed66e6cf1 073a65c52e0f6c40928651deba084e51
+
+It sits at index 1 of block 1750000, whose hash is
+
+    a9262002d78adc4829a5d5ea0be47e31 d0b47f819f394a4f0f108d516a4831f1
+
+Captured 2026-11-02 from `xmr-node.cakewallet.com:18081` through Tor (`curl
+--socks5-hostname` via `127.0.0.1:9050`) with `scripts/pin-tx.mjs`. The node's
+claims are recorded and never trusted; the id is proven from the bytes alone.
+
+This file once said `type5` in its name while the type is 3; it is renamed for
+its type, and `monero-tx-type3-2in.json` is the multi-input witness beside it.
+The full base-and-prunable layout is written out in the fixture's own
+`source.layout`, resolved by reading the pinned `rctTypes.h`.
+
+The file's own sha256, spaced as always:
+
+    ee90a17a50fdb8878bfd6a721d15e9a4 54b764c2decb774e03d9db2d00b33db1
+
+Id and controls are proven by `test/monero-tx-corpus.test.mjs`.
+
+## monero-tx-type3-2in.json
+
+One real Monero mainnet NON-MINER transaction: version 2, RingCT type 3
+(RCTTypeBulletproof), 2707 bytes, 2 inputs and 2 outputs, id
+
+    d2e04503b2db017f729388dbea4f8a74 17e7eabc624978074b08a6cdeaebfd7c
+
+It sits at index 5 of the same block 1750000, captured the same way. It is the
+witness for the MLSAG dimensions: type 3 is the simple layout, one MLSAG per
+input, so `ss` is (mixin+1) rows by two columns with one `cc` each. A walk that
+used one row per input plus an aggregate and a single `cc` (the Full layout)
+agrees with this only when there is one input, and against this fixture walks
+384 bytes short and computes the wrong id. The 1-input pin could not see it.
+
+The file's own sha256, spaced as always:
+
+    1160e8d765ac34bb73015ea39b49ba4a 7c0d82a87b61d8bc3902db5484121a8d
+
+Id and controls are proven by `test/monero-tx-corpus.test.mjs`.
