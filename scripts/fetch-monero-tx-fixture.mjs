@@ -186,7 +186,7 @@ async function main() {
       (shape.inputs === 1 && shape.outputs === 1) ? '1in-1out' :
       (shape.inputs === 1 && shape.outputs >= 2) ? '1in-manyout' :
       (shape.inputs >= 3) ? 'manyin' :
-      (shape.fee !== null && shape.fee > 0n && shape.fee <= 1000000n) ? 'smallfee' :
+      (shape.fee !== null && shape.fee > 0n && shape.fee <= 50000000n) ? 'smallfee' :
       (shape.hasZeroAmount) ? 'zeroamount' : null;
     if (!tag) continue;
     if (SHAPE !== 'any' && tag !== SHAPE) continue;
