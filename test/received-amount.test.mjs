@@ -64,10 +64,11 @@ test('the walked amounts are the wire amounts, byte-exact', () => {
   console.log('[received-amount] replay confirms 0n on both outputs (ciphertext)');
 });
 
-test('the walk consumed the right bytes: the ecdh amount halves match the wire', () => {
-  // the earlier probe extracted these from the walked base
-  const ecdh0Wire = base.slice(cursor, cursor + 8);
-  // the walked amounts ARE the ecdh wire bytes, read as u64le
-  assert.deepEqual(Array.from(ecdhAmount0), Array.from(ecdh0Wire));
+test('the walk consumed the right bytes: the ecdh amount bytes match the wire', () => {
+  // the wire amounts (from the earlier ecdh-pin test) are these exact bytes
+  assert.equal(Buffer.from(ecdhAmount0).toString('hex'), 'ee4833076711954d',
+    'output 0 ecdh amount is the wire bytes');
+  assert.equal(Buffer.from(ecdhAmount1).toString('hex'), 'fd1ec371a3831f45',
+    'output 1 ecdh amount is the wire bytes');
   console.log('[received-amount] the walked amounts are the wire ecdh amounts');
 });
