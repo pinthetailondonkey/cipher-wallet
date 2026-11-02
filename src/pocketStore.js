@@ -66,6 +66,20 @@ function pocketKey(coin, index) {
 }
 
 export function createPocketStore(kv) {
+  // Every read-modify-write of the table goes through this queue, so two
+  // callers never hold the same table copy at once. Without it, issue() and
+  // record() each read the whole document, change their one row, and write
+  // the whole document back: two concurrent calls and the second write
+  // erases the first caller's row. The on-disk format does not change; the
+  // queue only orders who may read-then-write.
+  let queueTail = Promise.resolve();
+  function serialized(work) {
+    const run = queueTail.then(work, work);
+    // the queue must keep moving even when a caller's work failed
+    queueTail = run.catch(() => {});
+    return run;
+  }
+
   async function readDoc() {
     const raw = await kv.get(POCKET_TABLE_KEY);
     if (raw == null) return { ok: true, table: {}, handle: null };
@@ -135,8 +149,9 @@ export function createPocketStore(kv) {
     // Issue a pocket. Idempotent per coin:index: issuing the same one twice
     // never duplicates and never overwrites a pocket that already has state.
     // When `handle` is passed, it lands in the same write as the pocket.
-    async issue(pocket, { now = Date.now(), handle = undefined } = {}) {
+    issue(pocket, { now = Date.now(), handle = undefined } = {}) {
       if (!pocket || !PAYMENT_STATES.includes(pocket.state)) throw new Error('A pocket needs a state.');
+      return serialized(async () => {
       const { ok, table, handle: storedHandle } = await readDoc();
       if (!ok) throw new Error('The pocket table on this device cannot be read.');
       const key = pocketKey(pocket.coin, pocket.index);
@@ -164,6 +179,7 @@ export function createPocketStore(kv) {
       table[key] = row;
       await writeDoc(table, handle === undefined ? storedHandle : handle);
       return row;
+      });
     },
 
     // A watcher report for one pocket. One pocket names one transaction; a
@@ -171,6 +187,15 @@ export function createPocketStore(kv) {
     // repeated report of the same payment is a no-op, so a re-fetch cannot
     // walk the state backwards or split one payment into two pockets.
     async record(coin, index, report, { amount, threshold, now = Date.now() } = {}) {
+      // The demand is the point of the check: without it a report of any
+      // amount walks the payment to confirmed, and a short payment is
+      // indistinguishable from a paid one. receive.scan passes it; a caller
+      // that has no price has no business recording a payment. The check
+      // runs before the queue so a malformed call never queues at all.
+      if (amount === undefined) {
+        throw new Error('A payment is recorded against a demand: pass the amount the pocket must cover.');
+      }
+      return serialized(async () => {
       const { ok, table } = await readTable();
       if (!ok) throw new Error('The pocket table on this device cannot be read.');
       const key = pocketKey(coin, index);
@@ -203,6 +228,7 @@ export function createPocketStore(kv) {
       table[key] = next;
       await writeTable(table);
       return next;
+      });
     },
   };
 }
