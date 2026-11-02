@@ -35,7 +35,7 @@ const ZEROAMOUNT = JSON.parse(readFileSync(new URL('./fixtures/monero-tx-zeroamo
 const unspaced = (text) => String(text).replace(/\s+/g, '');
 const bytesOf = (hexText) => Uint8Array.from(Buffer.from(unspaced(hexText), 'hex'));
 
-const BLOCK = bytesOf(ZEROAMOUNT.block.blob);
+const BYTES = bytesOf(ZEROAMOUNT.asHex);
 const walked = readTransaction(BYTES, 0, 'zeroamount fixture');
 
 // extract the walked ecdh amount bytes from the real fixture
