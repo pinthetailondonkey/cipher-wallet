@@ -5,9 +5,27 @@ never needs a custodian and never needs a node you run.
 
 This repo is Phases 0 to 2 complete, and Phase 3 part-built: the units, the
 root and pocket derivation, the vault, the receive path, the Bitcoin spend path,
-and the Monero keys, base58 and address encoding. There is no Monero
-transaction, no merging and no recovery shards, and nothing here has been run
-against real money.
+and the Monero keys, base58, address encoding, block and transaction reading
+(pinned to real mainnet bytes with provenance), the block walk (every transaction
+id proven against the block's own hash list, the tree root re-proven from the
+proven ids), the transaction fetch client (getTransactions with named refusals),
+and the capture tooling (pin-tx.mjs: one command from node + height + index to
+a pinned fixture). There is no Monero transaction building, no merging, no
+recovery shards, and nothing here has been run against real money.
+
+### What is still open on the Monero read path
+
+- RingCT type 3 (Bulletproof1, pre-Plus) has a pinned real fixture with the
+  base layout resolved by execution, but the prunable structure (Bulletproof1
+  serialization order and the Full-type Mlsag dimensions) is an open question
+  documented in the type 3 fixture's provenance. The reader refuses type 3
+  with a named error; the extension awaits the layout resolution.
+- RingCT amount decoding (ringct.js decodeAmount) is pinned to published
+  vectors and round-trips consistently, but no real amount has been decoded
+  and matched to one the owner knows. The module says so at the top and must
+  not gate a payment until it does.
+- Lane C (recognizing the wallet's own outputs against a scan) is gated on a
+  countersigned work order. The rootVerify module is preparation only.
 
 ## Setup, once per checkout
 
