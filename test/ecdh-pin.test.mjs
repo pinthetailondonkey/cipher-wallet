@@ -31,7 +31,8 @@ const BYTES = Uint8Array.from(Buffer.from(unspaced(FIXTURE.asHex), 'hex'));
 const tx = readTransaction(BYTES, 0, 'zeroamount fixture');
 
 // The base section layout, read off the real bytes: type byte, fee varint,
-// then one 16-byte ecdh block per output, then one 32-byte commitment per
+// then one 8-byte ecdh amount per output (Bulletproof+ carries no mask half;
+// the mask is the public commitment), then one 32-byte commitment per
 // output. The base slice starts right after the prefix.
 test('the real transaction carries its ecdhInfo at the walked positions', () => {
   assert.equal(tx.rctType, 6);
@@ -49,14 +50,25 @@ test('the real transaction carries its ecdhInfo at the walked positions', () => 
   };
   assert.equal(varint(), 6n, 'the base opens with the ringct type');
   assert.equal(varint(), 8900000000n, 'the fee as walked');
-  const ecdh0 = base.slice(at, at + 16); at += 16;
-  const ecdh1 = base.slice(at, at + 16); at += 16;
-  assert.equal(Buffer.from(ecdh0).toString('hex'), 'ee4833076711954dfd1ec371a3831f45',
-    'output 0 ecdh block, byte-exact against the real transaction');
-  assert.equal(Buffer.from(ecdh1).toString('hex'), '8d546a8b93ffb106259109385a96af50',
-    'output 1 ecdh block, byte-exact against the real transaction');
-  assert.equal(base.length - at, 48, 'two 32-byte commitments close the base');
-  console.log('[ecdh-pin] both ecdh blocks extracted at the walked positions');
+  // the corrected layout (Zebra-1 byte-level ruling): 8-byte ecdh amounts
+  // per output, back to back, then 32-byte commitments. The 16-byte-block
+  // reading in the first version of this test cut commitment0's first 8
+  // bytes and called them a mask; 1+5+16+64 = 86 only works with 24-byte
+  // commitments, which no Monero type writes.
+  const ecdh0 = base.slice(at, at + 8); at += 8;
+  const ecdh1 = base.slice(at, at + 8); at += 8;
+  assert.equal(Buffer.from(ecdh0).toString('hex'), 'ee4833076711954d',
+    'output 0 ecdh amount, byte-exact against the real transaction');
+  assert.equal(Buffer.from(ecdh1).toString('hex'), 'fd1ec371a3831f45',
+    'output 1 ecdh amount, byte-exact against the real transaction');
+  const commit0 = base.slice(at, at + 32); at += 32;
+  const commit1 = base.slice(at, at + 32); at += 32;
+  assert.equal(Buffer.from(commit0).toString('hex'), '8d546a8b93ffb106259109385a96af50 1389e631ad26b5f119272745c7aeda1f'.replace(/\s+/g, ''),
+    'commitment0, whose first 8 bytes were once misread as a mask');
+  assert.equal(Buffer.from(commit1).toString('hex'), '07097b9f441910ac6ae218efca465507 c7e4e1695c3e900f00ed81db43319452'.replace(/\s+/g, ''),
+    'commitment1 closes the base');
+  assert.equal(base.length - at, 0, 'the base is exactly consumed: 1 + 5 + 16 + 64 = 86');
+  console.log('[ecdh-pin] 8B amounts and 32B commitments pinned at the walked positions');
 });
 
 test('the walked amount fields are ciphertext-as-number, and the test says so', () => {

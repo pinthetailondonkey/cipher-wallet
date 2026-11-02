@@ -46,38 +46,44 @@ function baseLayout(tx) {
   varint(); // fee
   const blocks = [];
   for (const output of tx.outputs) {
+    // the true layout: 8-byte ecdh amounts, one per output, back to back;
+    // the commitments follow as 32 bytes each. No mask half in ecdhInfo.
     const amountHalf = base.slice(at, at + 8); at += 8;
-    const maskHalf = base.slice(at, at + 8); at += 8;
-    blocks.push({ output, amountHalf, maskHalf });
+    blocks.push({ output, amountHalf });
   }
-  return { blocks, consumed: at, base };
+  const commitment0 = base.slice(at, at + 32); at += 32;
+  const commitment1 = base.slice(at, at + 32); at += 32;
+  return { blocks, consumed: at, base, commitment0, commitment1 };
 }
 
-test('the walked amount bytes are the ecdh amount halves, byte-exact on the real fixture', () => {
+test('the walked amount bytes are the two 8-byte ecdh amounts, byte-exact on the real fixture', () => {
   const { blocks } = baseLayout(walked);
-  // Monero's wire: ecdhInfo is an array of 16-byte entries, one per output:
-  // [amount0 mask0] [amount1 mask1]. The walk reads 8 bytes per output
-  // consecutively, so walked output 0 gets the real amount0 and walked
-  // output 1 gets... amount0's MASK. That mislabel is the finding: the
-  // walk's per-output amounts are shifted by one entry from the wire's
-  // ecdh blocks, and only output 0's walked amount is an amount at all.
+  // THE TRUE LAYOUT (Zebra-1 byte-level ruling, verified here by execution):
+  // Bulletproof+ ecdhInfo carries the ENCRYPTED AMOUNT ONLY, 8 bytes per
+  // output, no mask half. The mask lives in the commitment (C = aH + bG),
+  // which is public on the wire. Base layout: [type 1B][fee 5B][amount0 8B]
+  // [amount1 8B][commitment0 32B][commitment1 32B] = 86 bytes, exact.
+  // The walk at block.js:237 was always correct: its two 8-byte reads are
+  // amount0 and amount1, and its two 32-byte takes are the commitments.
+  // The earlier "mislabel" reading (16-byte entries with interleaved masks)
+  // was wrong: 8d546a8b93ffb106 is commitment0's first 8 bytes, not amount1's
+  // neighbor, and 1+5+16+64 = 86 only works if the commitments are 24 bytes,
+  // which no Monero type writes.
   const expectedAmount0 = 'ee4833076711954d';
-  const expectedMask0 = 'fd1ec371a3831f45';
-  const expectedAmount1 = '8d546a8b93ffb106';
-  const expectedMask1 = '259109385a96af50';
+  const expectedAmount1 = 'fd1ec371a3831f45';
+  const expectedCommit0 = '8d546a8b93ffb106259109385a96af50 1389e631ad26b5f119272745c7aeda1f';
+  const expectedCommit1 = '07097b9f441910ac6ae218efca465507 c7e4e1695c3e900f00ed81db43319452';
   assert.equal(Buffer.from(blocks[0].amountHalf).toString('hex'), expectedAmount0,
-    'output 0 walked amount is the wire amount0');
-  assert.equal(Buffer.from(blocks[0].maskHalf).toString('hex'), expectedMask0,
-    'the bytes after it are wire mask0');
+    'output 0 walked amount is wire amount0');
   assert.equal(Buffer.from(blocks[1].amountHalf).toString('hex'), expectedAmount1,
-    'output 1 walked amount is the wire amount1');
-  assert.equal(Buffer.from(blocks[1].maskHalf).toString('hex'), expectedMask1,
-    'and the bytes after it are wire mask1');
-  // The walk's per-output amount fields carry the 16-byte ecdh blocks sliced
-  // as 8-byte amounts: output 0 carries amount0, output 1 carries mask0 -
-  // the shift. This is the finding, pinned so the fix lands with proof.
-  console.log('[received-amount] FINDING: the walk shifts ecdh halves across outputs;');
-  console.log('[received-amount] walked output[1].amount is wire mask0, not an amount.');
+    'output 1 walked amount is wire amount1: NOT a mask, the walk was right');
+  const base = walked.baseBytes;
+  const squeeze = (text) => String(text).replace(/\s+/g, '');
+  assert.equal(squeeze(Buffer.from(base.slice(22, 54)).toString('hex')), squeeze(expectedCommit0),
+    'commitment0 starts at byte 22 of the base (after type, fee, two amounts)');
+  assert.equal(squeeze(Buffer.from(base.slice(54, 86)).toString('hex')), squeeze(expectedCommit1),
+    'commitment1 closes the base at byte 86');
+  console.log('[received-amount] CORRECTED layout: 8B amounts, 32B commitments, no ecdh mask half.');
 });
 
 test('the decoded mask is the XOR pad applied, not the wire mask: proven by round trip', () => {
