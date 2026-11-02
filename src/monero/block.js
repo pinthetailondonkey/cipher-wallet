@@ -245,6 +245,25 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
         throw new Error(`That ${label} is RingCT type 6 without a key input to sign, so this build does not read it.`);
       }
       prunableEnd = walkType6Prunable(cursor, inputCount, outputCount, ringSize);
+    } else if (read === 3n && label !== 'miner transaction') {
+      // RingCT type 3 (RCTTypeBulletproof: a Bulletproof1 range proof with an
+      // MLSAG). This is the simple variant, where a separate MLSAG signs each
+      // input. The base is the fee, then one uncompressed ecdhInfo entry per
+      // output (32B mask then 32B amount, the pre-Bulletproof2 encoding), then
+      // one 32B commitment per output. The prunable is walked below.
+      rctType = 3;
+      cursor.varint('ringct fee');
+      for (let i = 0; i < outputCount; i += 1) {
+        cursor.take(32, `output ${i} ecdh mask`);
+        cursor.take(32, `output ${i} ecdh amount`);
+      }
+      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      baseEnd = cursor.at;
+      const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
+      if (inputCount < 1 || ringSize < 1) {
+        throw new Error(`That ${label} is RingCT type 3 without a key input to sign, so this build does not read it.`);
+      }
+      prunableEnd = walkType3Prunable(cursor, inputCount, outputCount, ringSize);
     } else if (read !== 0n) {
       throw new Error(
         `That ${label} carries RingCT type ${read}. Every miner transaction Monero has mined since RingCT is type Null, so another type means a prunable section this build refuses to guess its way through. This is a refused read, not a finding.`,
@@ -455,4 +474,53 @@ export function parseBlock(bytes, { expectHash } = {}) {
     id,
     byteLength: bytes.length,
   };
+}
+
+// The type 3 prunable section (RCTTypeBulletproof), walked from the bytes in
+// Monero's own order (serialize_rctsig_prunable, src/ringct/rctTypes.h at the
+// pinned commit): nbp is a 4-byte little-endian uint32 (this type predates the
+// varint switch that came with Bulletproof2), then one Bulletproof1 per proof
+// (A, S, T1, T2, taux, mu: 6 x 32B, then L count-prefixed, R count-prefixed,
+// then a, b, t: 3 x 32B; V is reconstructed from outPk and not serialized),
+// then one MLSAG per input, then pseudoOuts (one per input). Nothing on the
+// wire carries a dimension: every count comes from the tx structure. Returns
+// the offset where the section ends.
+function walkType3Prunable(cursor, inputCount, outputCount, ringSize) {
+  // nbp: 4-byte little-endian uint32 (this type predates the varint switch)
+  const nbpBytes = cursor.take(4, 'Bulletproof count (4-byte LE)');
+  const bpCount = nbpBytes[0] | (nbpBytes[1] << 8) | (nbpBytes[2] << 16) | (nbpBytes[3] << 24);
+  if (bpCount > outputCount) {
+    throw new Error('That transaction carries more Bulletproof proofs than outputs, which Monero refuses.');
+  }
+  let maxAmounts = 0;
+  for (let p = 0; p < bpCount; p += 1) {
+    cursor.take(32 * 6, `Bulletproof ${p} A S T1 T2 taux mu`);
+    const left = Number(cursor.varint(`Bulletproof ${p} L count`));
+    cursor.take(32 * left, `Bulletproof ${p} L`);
+    const right = Number(cursor.varint(`Bulletproof ${p} R count`));
+    cursor.take(32 * right, `Bulletproof ${p} R`);
+    cursor.take(32 * 3, `Bulletproof ${p} a b t`);
+    // Monero refuses a proof whose L/R are mismatched or under six, and
+    // refuses a set of proofs too small to cover every output (each proof
+    // covers 2^(L-6) amounts).
+    if (left < 6 || left !== right) {
+      throw new Error(`That transaction's Bulletproof ${p} has L/R sizes ${left}/${right}, which Monero refuses.`);
+    }
+    maxAmounts += 2 ** (left - 6);
+  }
+  if (maxAmounts < outputCount) {
+    throw new Error(`That transaction's Bulletproof proofs cover ${maxAmounts} amounts but it has ${outputCount} outputs, which Monero refuses.`);
+  }
+  // One MLSAG per input (the simple layout: mg_elements = inputs). Each MLSAG
+  // is an ss matrix of ringSize rows by two columns, then one cc. Rows,
+  // columns and the count are all known from the tx structure, so nothing is
+  // prefixed. A matrix that assumed one row per input plus an aggregate (the
+  // Full layout) would land on the right offset only when there is one input.
+  for (let i = 0; i < inputCount; i += 1) {
+    cursor.take(32 * ringSize * 2, `input ${i} MLSAG ss matrix`);
+    cursor.take(32, `input ${i} MLSAG cc`);
+  }
+  // pseudoOuts: one per input, appended after the MLSAGs for this type.
+  cursor.take(32 * inputCount, 'pseudo-output commitments');
+  return cursor.at;
 }
