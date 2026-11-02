@@ -216,3 +216,100 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
     txHashes: claimedTxHashes,
   };
 }
+
+// The transaction door. A block names its non-miner transactions by hash only;
+// to read their bytes a client asks /get_transactions - the REST door, not the
+// json_rpc one, the same distinction the capture scripts make. What comes back
+// is treated exactly like a block blob: hex bytes the wallet will parse
+// itself, with the node's fields beside them (confirmations, in_pool, ...) as
+// unread claims.
+//
+// Duties this door owes, in the same voice as getBlock:
+//   - every requested hash is a 64-hex id, asked in one batch
+//   - a hash the node does not carry is named: missed_tx is a refusal, not a
+//     partial answer, because a walk that silently drops a transaction proves
+//     less than it claims
+//   - the answer's status must be OK and every as_hex must be even-length hex
+//   - the order of txs is the order of the request: the caller's hash list is
+//     the law of the mapping, and a node that reorders is a node that lies
+export async function getTransactions(node, hashes, { pool = null, ...options } = {}) {
+  if (!Array.isArray(hashes) || hashes.length === 0) {
+    throw new Error('A transaction fetch asks for at least one 64-hex id.');
+  }
+  const asked = hashes.map((h) => String(h).trim().toLowerCase());
+  for (const h of asked) {
+    if (!HEX64.test(h)) throw new Error(`A transaction hash is 64 hex characters, not ${h.slice(0, 80)}`);
+  }
+
+  const address = cleanNode(node);
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  if (typeof fetchImpl !== 'function') throw new Error('A node call needs a way to fetch.');
+
+  // One POST to the REST door, with the same timeout discipline as call():
+  // a node that takes the connection and says nothing is a stall, and a read
+  // that never ends is a walk that never proves.
+  const controller = options.timeoutSignal ? null : new AbortController();
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 10000;
+  let timedOut = false;
+  const timer = controller ? setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs) : null;
+  const noAnswer = (error) => (timedOut
+    ? new Error(`The Monero node ${address} did not answer within ${timeoutMs} ms. A silent node is a failed read, not a finding about any transaction.`)
+    : new Error(`The Monero node ${address} did not answer: ${error?.message || 'no answer'}. This is a failed read, not a finding about any transaction.`));
+
+  try {
+    let response;
+    try {
+      response = await fetchImpl(`http://${address}/get_transactions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ txs_hashes: asked, decode_as_json: false }),
+        redirect: 'error',
+        signal: options.timeoutSignal ?? controller.signal,
+      });
+    } catch (error) {
+      throw noAnswer(error);
+    }
+    if (!response || typeof response.text !== 'function') {
+      throw new Error(`The Monero node ${address} answered with something that is not a response.`);
+    }
+    if (response.url && !sameHost(address, response.url)) {
+      throw new Error(`The Monero node ${address} sent this request to another host. That is a different server, so nothing it says is used.`);
+    }
+    if (!response.ok) {
+      throw new Error(`The Monero node ${address} refused the transaction read with status ${response.status}.`);
+    }
+    let body;
+    try {
+      body = JSON.parse(await response.text());
+    } catch {
+      throw new Error(`The Monero node ${address} answered with something that is not JSON. This is a failed read, not a finding about any transaction.`);
+    }
+    if (body.status && body.status !== 'OK') {
+      throw new Error(`The Monero node ${address} said ${String(body.status).slice(0, 60)} instead of OK.`);
+    }
+    const txs = Array.isArray(body.txs) ? body.txs : [];
+    if (txs.length !== asked.length) {
+      throw new Error(
+        `the count and the list do not agree: ${asked.length} transaction(s) asked, ${txs.length} answered by ${address}`,
+      );
+    }
+    const missed = Array.isArray(body.missed_tx) ? body.missed_tx : [];
+    if (missed.length > 0) {
+      throw new Error(
+        `The Monero node ${address} does not carry ${missed.length} of the asked transaction(s): ${String(missed[0]).slice(0, 66)}. A walk that drops one proves less than it claims.`,
+      );
+    }
+    const bytes = [];
+    for (let i = 0; i < txs.length; i += 1) {
+      const asHex = typeof txs[i].as_hex === 'string' ? txs[i].as_hex.toLowerCase() : '';
+      if (!HEX.test(asHex) || asHex.length === 0 || asHex.length % 2 !== 0) {
+        throw new Error(`The Monero node ${address} answered transaction ${i} without readable hex bytes.`);
+      }
+      bytes.push(hex.decode(asHex));
+    }
+    if (pool) pool.assertCurrent(node);
+    return { bytes, address, asked };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
