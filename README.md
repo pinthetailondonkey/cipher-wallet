@@ -15,11 +15,13 @@ recovery shards, and nothing here has been run against real money.
 
 ### What is still open on the Monero read path
 
-- RingCT type 3 (Bulletproof1, pre-Plus) has a pinned real fixture with the
-  base layout resolved by execution, but the prunable structure (Bulletproof1
-  serialization order and the Full-type Mlsag dimensions) is an open question
-  documented in the type 3 fixture's provenance. The reader refuses type 3
-  with a named error; the extension awaits the layout resolution.
+- RingCT type 3 (RCTTypeBulletproof) is read and pinned on two real mainnet
+  transactions, one with a single input and one with two. The two-input pin is
+  the one that matters: this type is the simple layout, one MLSAG per input,
+  so a matrix of one row per input plus an aggregate fits a single-input
+  transaction byte for byte and is wrong. The walk is written out in
+  `test/fixtures/README.md` against the pinned `rctTypes.h`. Types 1, 2, 4 and
+  5 still refuse by name.
 - RingCT amount decoding (ringct.js decodeAmount) is pinned to published
   vectors and round-trips consistently, but no real amount has been decoded
   and matched to one the owner knows. The module says so at the top and must
@@ -71,32 +73,43 @@ amounts now decrypt (`src/monero/ringct.js`), but they are pinned only to
 keccak's vectors and Monero's varint, not to a real transaction, so nothing may
 gate a payment on them yet.
 
-**The block reader was withdrawn after review, and the withdrawal is the
+**The block reader was withdrawn after review, and the withdrawal was the
 feature.** `src/monero/nodeClient.js` fetches a block from one pinned node and
-refuses every answer it cannot frame — that part holds and is still tested.
-`src/monero/block.js` parses a block header and refuses every block body, out
-loud, because the body model it shipped with was not Monero's. Review found two
-defects that 382 green tests could not see, and the reason they could not see
-them is the point: the parser and its fixtures were written by the same hand.
-The body is `header || miner_tx || varint(count) || 32-byte hash × count`, not a
-list of full transactions; and a version 2 transaction id is
+refuses every answer it cannot frame. `src/monero/block.js` parses a block
+header and, now, its body, because the body model it first shipped with was not
+Monero's. Review found two defects that 382 green tests could not see, and the
+reason they could not see them is the point: the parser and its fixtures were
+written by the same hand. The body is
+`header || miner_tx || varint(count) || 32-byte hash × count`, not a list of
+full transactions; and a version 2 transaction id is
 `cn_fast_hash(prefix_hash || base_rct_hash || prunable_hash)`, not a hash of the
 prefix alone. Every real miner transaction is version 2, so the old reader would
 have emitted confident, wrong identities. A wrong identity is worse than none,
-so the door refuses, there is no flag that opens it, and the tests assert that
-both the real shape and the old fictional shape are refused — a fixture written
-here may not stand in for a real sample. What remains proven: the header layout,
-the node client's refusals, and the fact that nothing here can gate a payment.
-What is not built: any body model, the block id rule, wiring into a pocket scan,
-and anything that spends or broadcasts. Nothing on the Monero side has been
-funded or touched mainnet.
+so the door refused, there was no flag that opened it, and the tests assert that
+the old fictional shape is still refused — a fixture written here may not stand
+in for a real sample.
+
+The body was rebuilt against real mainnet bytes, not against a fixture written
+to match the parser: the hash list is read from the block, every transaction id
+is recomputed from that transaction's own bytes and must equal the block's own
+entry for that index, and the tree root is re-derived from the proven ids and
+must equal the root the block carries. A block whose bytes and list disagree is
+refused by name. A walk that leaves a byte over is a framing lie and refused.
+The live path runs that whole chain over Tor against a real node.
+
+What is still not built: RingCT types 1, 2, 4 and 5 (type 3 is read), the scan
+wired to a block walk, and anything that spends or broadcasts. Nothing on the
+Monero side has been funded or touched mainnet.
 
 The transport for reading blocks is ruled: a shipped list of public nodes in
 `src/monero/nodes.js`, with a private node overriding the list when
 `CIPHER_XMR_NODE` is set — one node per scan, sticky, and fail-closed, so a node
 that dies mid-scan refuses the scan rather than stitching two operators together.
-The list ships empty until the founder names addresses. Nothing reads the
-variable yet: the selection is built and tested, the reader is not.
+**The list still ships empty**, so a scan has no node to ask until the founder
+names addresses; capture scripts take `CIPHER_XMR_NODE` directly. Nothing reads
+the variable at runtime yet either: `nodeClient.js` takes the node its caller
+pins, and `nodes.js` is not imported by it. The selection is built and tested,
+the wiring is not.
 
 ## The vault is two layers
 
