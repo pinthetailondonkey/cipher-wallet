@@ -149,7 +149,7 @@ test('decode-path consistency: the existing decodeAmount inverts the existing en
   };
   varint(); varint();
   const ecdh0 = base.slice(at, at + 16);
-  const ecdh1 = base.slice(at + 16, at + 32);
+  const _ecdh1 = base.slice(at + 16, at + 32);
   const noise0 = decodeAmount({ derivation, index: 0, info: ecdh0 });
   const noiseAgain = decodeAmount({ derivation, index: 0, info: ecdh0 });
   assert.equal(noise0.value, noiseAgain.value, 'the noise is deterministic, not random');

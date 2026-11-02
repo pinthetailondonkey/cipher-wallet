@@ -81,7 +81,7 @@ test('the walked amount fields are ciphertext-as-number, and the test says so', 
 
 test('a flipped byte inside an ecdh block moves that block and nothing else', () => {
   const mutated = Uint8Array.from(BYTES);
-  const block0Start = tx.prefixEnd + 2; // type byte + fee varint width varies; walk instead
+
   // find the fee varint width by re-walking
   const probe = readTransaction(BYTES, 0, 'probe');
   const base = probe.baseBytes;
