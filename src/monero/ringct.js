@@ -57,6 +57,16 @@
 // confirmation, and that gate lives outside this repository. What this module
 // now guarantees is narrower and it does guarantee it: when the caller cannot
 // reproduce the on-chain commitment, there is no amount, only a named refusal.
+//
+// WHAT THE GUARD DOES NOT PROVE, since it is the obvious attack on it: a caller
+// who supplies its own `info` can always commit to its own answer and pass.
+// Feed a made-up derivation WITH the real transaction's commitment and the
+// refusal is real, because the commitment is not the caller's. Feed both sides
+// and the check only shows the decode is self-consistent, which is the same
+// thing the old sixteen-byte round trip showed. The difference is that this
+// self-consistency is now over Monero's arithmetic and H rather than over an
+// invented tuple, and that the fixture-driven tests in
+// test/ringct-amount-decode.test.mjs pin the pieces against upstream.
 
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import {

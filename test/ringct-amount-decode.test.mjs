@@ -268,3 +268,28 @@ test('the type 3 base ends at 401 and the first Bulletproof field starts at 405'
   assert.equal(lCount, 7n, 'a two-output Bulletproof has 7 rounds');
   console.log('[ringct-amount] baseEnd 401 + 4B nbp = 405; the two numbers were never in conflict');
 });
+
+// The guard's own limit, pinned so nobody overclaims it. A caller that supplies
+// BOTH the info and the commitment can always satisfy the check, because it
+// commits to its own answer. That is not a bug, it is what the check can and
+// cannot do; the real transaction's commitment is what makes it evidence.
+test('the guard is only as strong as where the commitment came from', () => {
+  const bogus = new Uint8Array(32).fill(0x99);
+  const info = encodeAmountForTest({ derivation: bogus, index: 0, value: 42n, rctType: 6 });
+  const mask = commitmentMask(derivationToScalar(bogus, 0));
+  // Both sides the caller's: passes, and proves only self-consistency.
+  assert.equal(
+    decodeAmount({ derivation: bogus, index: 0, info, rctType: 6, commitment: commitmentOf({ amount: 42n, mask }) }).value,
+    42n,
+  );
+  // The commitment from the chain instead: the made-up derivation is refused.
+  const { bytes } = fixture('monero-tx-ringct-type6');
+  const tx = readTransaction(bytes, 0, 'type6 fixture');
+  assert.throws(
+    () => decodeAmount({
+      derivation: bogus, index: 0, info: tx.outputs[0].ecdh, rctType: 6, commitment: tx.outputs[0].commitment,
+    }),
+    /commitment/i,
+  );
+  console.log('[ringct-amount] guard pinned at its real strength: chain commitment refuses, self-supplied does not');
+});
