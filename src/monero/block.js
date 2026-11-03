@@ -225,6 +225,20 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
   let rctType = null;
   let baseEnd = prefixEnd;
   let prunableEnd = null;
+  // The ecdh entry and the commitment belong to an OUTPUT, not to the base, and
+  // the amount decoder needs both to prove a decoded amount. They are collected
+  // per output here and attached once the walk knows how many outputs there are.
+  //
+  // WIDTH, because a handoff once recorded this as an unresolvable 405-vs-401
+  // arithmetic discrepancy. Both numbers are right and they measure different
+  // things: on monero-tx-type3-1in the base ends at 401, the four-byte
+  // little-endian Bulletproof count sits at 401, and the first Bulletproof field
+  // therefore begins at 405. There is no conflict to settle, and the width rule
+  // is rctTypes.h serialize_rctsig_base: eight bytes for types 4/5/6 (the
+  // truncated amount, with the mask derived), sixty-four for types 1/2/3 (a
+  // thirty-two-byte mask then a thirty-two-byte amount). Sixteen is no type.
+  const ecdhByOutput = [];
+  const commitmentByOutput = [];
   if (version === 2n) {
     const read = cursor.varint('ringct type');
     if (read === 6n && label !== 'miner transaction') {
@@ -234,8 +248,8 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       // serialize_rctsig_base and serialize_rctsig_prunable write them.
       rctType = 6;
       cursor.varint('ringct fee');
-      for (let i = 0; i < outputCount; i += 1) cursor.take(8, `output ${i} ecdh amount`);
-      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      for (let i = 0; i < outputCount; i += 1) ecdhByOutput.push(cursor.take(8, `output ${i} ecdh amount`));
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       // Every input of one transaction spans the same ring, so the first
       // input's key-offset count is the ring size; a CLSAG carries one scalar
@@ -254,10 +268,14 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       rctType = 3;
       cursor.varint('ringct fee');
       for (let i = 0; i < outputCount; i += 1) {
-        cursor.take(32, `output ${i} ecdh mask`);
-        cursor.take(32, `output ${i} ecdh amount`);
+        const mask = cursor.take(32, `output ${i} ecdh mask`);
+        const amount = cursor.take(32, `output ${i} ecdh amount`);
+        const ecdh = new Uint8Array(64);
+        ecdh.set(mask, 0);
+        ecdh.set(amount, 32);
+        ecdhByOutput.push(ecdh);
       }
-      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
       if (inputCount < 1 || ringSize < 1) {
@@ -274,8 +292,8 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       // an argument rather than being written twice.
       rctType = Number(read);
       cursor.varint('ringct fee');
-      for (let i = 0; i < outputCount; i += 1) cursor.take(8, `output ${i} ecdh amount`);
-      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      for (let i = 0; i < outputCount; i += 1) ecdhByOutput.push(cursor.take(8, `output ${i} ecdh amount`));
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
       if (inputCount < 1 || ringSize < 1) {
@@ -297,10 +315,14 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
         for (let i = 0; i < inputCount; i += 1) cursor.take(32, `input ${i} pseudo-output`);
       }
       for (let i = 0; i < outputCount; i += 1) {
-        cursor.take(32, `output ${i} ecdh mask`);
-        cursor.take(32, `output ${i} ecdh amount`);
+        const mask = cursor.take(32, `output ${i} ecdh mask`);
+        const amount = cursor.take(32, `output ${i} ecdh amount`);
+        const ecdh = new Uint8Array(64);
+        ecdh.set(mask, 0);
+        ecdh.set(amount, 32);
+        ecdhByOutput.push(ecdh);
       }
-      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
       if (inputCount < 1 || ringSize < 1) {
@@ -314,6 +336,20 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
     } else {
       rctType = 0;
       baseEnd = cursor.at;
+    }
+  }
+
+  // Every RingCT type except Null carries one ecdh entry and one commitment per
+  // output. A Null transaction (every coinbase) carries neither, and the fields
+  // stay absent rather than present-and-empty so a caller cannot mistake "this
+  // transaction has no RingCT" for "this output's amount was already read".
+  if (rctType !== null && rctType !== 0) {
+    if (ecdhByOutput.length !== outputCount || commitmentByOutput.length !== outputCount) {
+      throw new Error(`That ${label} carries ${ecdhByOutput.length} ecdh entries and ${commitmentByOutput.length} commitments for ${outputCount} outputs, which Monero never writes.`);
+    }
+    for (let i = 0; i < outputCount; i += 1) {
+      outputs[i].ecdh = ecdhByOutput[i];
+      outputs[i].commitment = commitmentByOutput[i];
     }
   }
 

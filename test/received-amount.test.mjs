@@ -17,10 +17,16 @@
 // and the commitments are separate 32-byte fields. The correction is named
 // here and in e1c6826's record.
 //
-// Zebra-1's scope guard on the decode-path consistency (existing
-// decodeAmount inverts the existing encoder with a throwaway derivation)
-// is proven below with the SAME construction the commit already used,
-// restated as a test so the record carries it.
+// Zebra-1's scope guard on the decode-path consistency once proved that
+// decodeAmount inverts the existing encoder. That still held after the F1
+// rewrite, but it is no longer the interesting part: the amount path is now
+// pinned to Monero's own encoding in test/ringct-amount-decode.test.mjs, and
+// this file keeps only what is specific to this fixture — the walked bytes,
+// byte-exact, and the fact that they are ciphertext.
+//
+// The earlier header said "rctType 6, pre-Plus", which is wrong on the type
+// number: RCTTypeBulletproofPlus IS 6 (rctTypes.h:287), so type 6 is post-Plus.
+// The ecdh width stated here is right.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,8 +34,6 @@ import { readFileSync } from 'node:fs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { hex } from '@scure/base';
 import { readTransaction } from '../src/monero/block.js';
-import { walkBlockTxs } from '../src/monero/blockWalk.js';
-import { decodeAmount, encodeAmountForTest } from '../src/monero/ringct.js';
 
 const ZEROAMOUNT = JSON.parse(readFileSync(new URL('./fixtures/monero-tx-zeroamount.json', import.meta.url), 'utf8'));
 const unspaced = (text) => String(text).replace(/\s+/g, '');

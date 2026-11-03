@@ -115,3 +115,38 @@ CLSAG 5, BulletproofPlus 6**. The README's phrasing invites the reading that 4/5
 Bulletproof"; they are Bulletproof2 and CLSAG. Also `mg_elements` is `inputs` for Simple/Bulletproof/
 Bulletproof2 and **1** for Full and CLSAG/BulletproofPlus, so a type-1 transaction has exactly one
 MLSAG for the whole transaction. Lane R has been corrected separately.
+
+---
+
+## RESOLVED 2026-11-03T23:30Z — F1 closed by the builder, pending audit
+
+Status line at the top still says "unfixed, owner's call"; the owner called it. This section
+records what landed and what it is pinned to. The three claims above stand unchanged and were
+not re-derived; each is now answered point by point.
+
+1. **Width (claim 1).** `readTransaction` no longer discards the ecdh slice. Each RingCT output
+   now carries `ecdh` (8 bytes for types 4/5/6, 64 for types 1/2/3) and `commitment`, attached at
+   the end of the walk with an arity check. `decodeAmount` refuses any other width by name.
+   Sixteen appears nowhere.
+2. **Pad (claim 2).** `ecdhHash` is gone. `derivationToScalar` is `hash_to_scalar(derivation ||
+   varint(i))`, i.e. the reduce is back, and it is pinned to all 256 of Monero's own
+   `derive_secret_key` vectors by recovering the scalar as `derived - base mod l` — no expected
+   value authored here. The two pads are `cn_fast_hash("amount" || k)` and
+   `hash_to_scalar("commitment_mask" || k)`, pinned to literal bytes.
+3. **Reachability (claim 3).** Answered by the same change: the bytes are exposed and the only
+   caller is no longer a test. `received-amount` and the new suite drive it from real fixtures.
+
+**The part that was not in F1.** `decodeRct` does not stop at the decode: it rebuilds
+`Ctmp = mask*G + amount*H` and refuses unless it equals `outPk[i]`. F1 did not name this, and it is
+the one gate available without a key. It is now implemented, with H pinned to the bytes
+`crypto/generators.cpp` compiles in and reproduced from G in the test. Consequence, stated plainly:
+a wrong derivation now yields a named refusal, not a number.
+
+**Still open, and honestly so.** The pad needs the owner's view secret, so no real amount can be
+decrypted in-repo. The commitment check proves a decode is *a* valid opening, never *the* owner's.
+F1's step 3 ("pin against a real transaction where the amount is known to the owner") is therefore
+still an external gate, and a screen or watcher still must not call an amount confirmed.
+
+**What the fix does not touch:** the derivation, the keys, the address encoding, the block body
+model, and every other per-type walk. Types 1/2/3 now do scalar subtraction rather than XOR, which
+is the layout they actually use; the walk already stored 64 bytes for them before this change.

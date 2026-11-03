@@ -23,16 +23,25 @@ recovery shards, and nothing here has been run against real money.
   reader here already (a matrix read as one row per input, which only disagrees
   on multi-input transactions, and a pseudoOuts array in a section upstream never
   writes it to).
-- **RingCT amount decoding (ringct.js decodeAmount) is not built.** It is
-  pinned to published vectors and round-trips consistently, and that is the
-  trap: the round trip is through the decoder's own inverse, so it proves the
-  arithmetic agrees with itself and nothing else. Measured against Monero's
-  own serialization, the decoder demands sixteen bytes of ecdh info where no
-  RingCT type writes sixteen (types 4/5/6 write eight, types 1/2/3 write
-  sixty-four), it pads with the wrong function, and the reader does not even
-  expose the bytes it wants. Correcting it spans `block.js` and `ringct.js` and
-  has to be written per type. `state/FINDING-F1-ringct-amount.md` has the
-  proofs and the pinned upstream lines.
+- **RingCT amount decoding is built per type, and it refuses rather than
+  guesses.** It was wrong before: it demanded sixteen bytes of ecdh info where
+  no RingCT type writes sixteen, padded with a keccak that skipped `sc_reduce32`
+  and the `"amount"` domain tag, and read a mask the modern types derive.
+  `state/FINDING-F1-ringct-amount.md` holds the proofs, and every fix cites the
+  pinned upstream line it follows. What is pinned now, and to what: the
+  per-output scalar to Monero's own 256 `derive_secret_key` vectors; the
+  commitment generator H to the bytes `crypto/generators.cpp` compiles in,
+  recomputed from G in the test; both pads to literal bytes from the quoted
+  `ecdhDecode`; the widths (eight for types 4/5/6, sixty-four for 1/2/3) to
+  seven real mainnet transactions. Then the guard that matters: `decodeRct`
+  rebuilds the output's Pedersen commitment from the pair it decoded and refuses
+  on a mismatch, and so does this build. A wrong derivation therefore produces a
+  named refusal instead of a plausible number.
+  **What is still not pinned, and cannot be from inside this repository:** a
+  real amount that matches one the owner knows, because the pad needs the view
+  secret and keys stay out. So the commitment check proves a decode is *a* valid
+  opening, never *the* owner's. The line that unblocks a screen or a receipt is
+  still an external one, and no watcher calls a Monero amount confirmed yet.
 - Lane C (recognizing the wallet's own outputs against a scan) is gated on a
   countersigned work order. The rootVerify module is preparation only.
 
