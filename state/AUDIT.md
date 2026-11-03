@@ -405,3 +405,24 @@ when the door was wired. PARTIAL: the RingCT claim VERIFIED, the node paragraph 
 Verdict on the README as a whole: of the two sentences this audit was asked about, `RingCT amounts
 now decrypt` (F1) was FALSE and is now corrected; `every RingCT type ... is read` is now VERIFIED.
 The node-door paragraph needs the same correction it got once already.
+
+## 2026-11-03 — 04358d0 "README: the node door is walked, and what is left is only the list" — **VERIFIED**
+
+Docs only; gate at HEAD 611/611, build 31, lint 0e. Every factual clause re-tested rather than
+read:
+
+    "a caller that injects a pool keeps it unchanged"      -> injected pool. assertCurrent called: true
+    "with no override and no list, the refusal is named
+     at the wallet boundary"                              -> /No Monero node is configured/: true
+    "falls back to the node it named"                      -> getBlock returned the named address: true
+    nodeClient.js imports nodes.js; poolFor at :111; checks at :155 and :367  -> all true
+
+The residual I raised is now stated in the README ("a no-pool caller has no scan boundary, so it
+rotates after an abandon where a pool-holding caller would refuse") and points at this file. That is
+the honest framing; the underlying design choice is still open but it is no longer a hidden one.
+
+The remaining claim of absence is accurate: `PUBLIC_NODES` is still `[]` (`nodes.js:41-46`), so a scan
+still needs the variable or a hand-passed node.
+
+Also corrects the count in 19689f3's own paragraph without dropping it: the door is walked, only the
+list is missing. VERIFIED.
