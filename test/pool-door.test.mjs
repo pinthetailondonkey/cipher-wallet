@@ -8,7 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getBlock, getTransactions } from '../src/monero/nodeClient.js';
+import { getBlock, getInfo, getTransactions } from '../src/monero/nodeClient.js';
 import { createNodePool } from '../src/monero/nodes.js';
 
 // .example addresses are not .onion, so the pool needs allowClearnet
@@ -97,4 +97,149 @@ test('pool-door: a call against the CURRENT node passes the check', () => {
     }
     console.log('[pool-door] the current node passes the pool check');
   });
+});
+
+
+// ---------------------------------------------------------------------------
+// O6 REGRESSION. The pool refuses, so the request must never leave.
+// A recording fetchImpl and a recording pool share one log; the log is the
+// evidence. Against f1fcd6f this prints `fetch:... -> assert:...` and one
+// network call; after the fix it is `assert:...` alone and zero calls.
+// ---------------------------------------------------------------------------
+
+const REFUSAL = 'A scan runs against one Monero node. Refusing to stitch results from two.';
+
+function recordingDoor() {
+  const log = [];
+  const fetchImpl = async (url) => {
+    log.push(`fetch:${url}`);
+    return {
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify(url.endsWith('/get_transactions')
+        ? { status: 'OK', txs: [{ as_hex: 'ab'.repeat(32) }], missed_tx: [] }
+        : {
+            jsonrpc: '2.0',
+            id: '0',
+            result: {
+              blob: 'ab'.repeat(64),
+              block_header: { hash: 'a'.repeat(64), height: 1, prev_hash: 'c'.repeat(64) },
+            },
+          }),
+    };
+  };
+  const pool = {
+    assertCurrent(node) {
+      log.push(`assert:${node}`);
+      throw new Error(REFUSAL);
+    },
+    abandon(node) {
+      log.push(`abandon:${node}`);
+    },
+  };
+  return { log, fetchImpl, pool };
+}
+
+const DOORS = [
+  ['getBlock', (node, opts) => getBlock(node, { height: 1 }, opts)],
+  ['getTransactions', (node, opts) => getTransactions(node, ['a'.repeat(64)], opts)],
+  ['getInfo', (node, opts) => getInfo(node, opts)],
+];
+
+for (const [name, door] of DOORS) {
+  test(`O6 regression: ${name} makes NO network call when the pool refuses`, async () => {
+    const node = 'pinned.example:18081';
+    const { log, fetchImpl, pool } = recordingDoor();
+    await assert.rejects(door(node, { fetchImpl, pool, timeoutMs: 5000 }), /one Monero node/);
+    const fetches = log.filter((line) => line.startsWith('fetch:'));
+    assert.deepEqual(fetches, [], `no request may leave: ${log.join(' -> ')}`);
+    assert.equal(log.length, 1, `exactly one refusal entry: ${log.join(' -> ')}`);
+    assert.match(log[0], /^assert:/, 'the pool is asked before anything else');
+    console.log(`[pool-door] ${name}: refused with 0 network calls`);
+  });
+}
+
+test('O6 control: on the CURRENT node the pool is asked FIRST, then the request goes out', async () => {
+  const node = 'pinned.example:18081';
+  const log = [];
+  const fetchImpl = async (url) => {
+    log.push(`fetch:${url}`);
+    return {
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify({
+        jsonrpc: '2.0',
+        id: '0',
+        result: {
+          blob: 'ab'.repeat(64),
+          json: JSON.stringify({ tx_hashes: [] }),
+          block_header: { hash: 'a'.repeat(64), height: 1, prev_hash: 'c'.repeat(64) },
+        },
+      }),
+    };
+  };
+  const pool = { assertCurrent: (seen) => { log.push(`assert:${seen}`); }, abandon: () => {} };
+  await getBlock(node, { height: 1 }, { fetchImpl, pool, timeoutMs: 5000 });
+  assert.deepEqual(log.map((line) => line.split(':')[0]), ['assert', 'fetch'],
+    `the check must precede the socket: ${log.join(' -> ')}`);
+  console.log('[pool-door] ordered: assert -> fetch');
+});
+
+// ---------------------------------------------------------------------------
+// A DEAD NODE ENDS THE SCAN. It does not silently move the scan to the next
+// node: that would hand back bytes from a different operator inside one walk
+// and call it one answer. The transport failure abandons the node in the pool
+// so the NEXT scan starts elsewhere, and the current call still refuses.
+// ---------------------------------------------------------------------------
+test('a dead node refuses the scan and does not fail over inside it', async () => {
+  const pool = makePool(['first.example:18081', 'second.example:18081']);
+  const first = pool.pick();
+  const tried = [];
+  const fetchImpl = async (url) => {
+    tried.push(url);
+    throw new Error('ECONNREFUSED');
+  };
+
+  await assert.rejects(
+    getBlock(first, { height: 100 }, { fetchImpl, pool, timeoutMs: 5000 }),
+    /did not answer/,
+    'the call refuses on the dead node',
+  );
+  assert.equal(tried.length, 1, `only the pinned node was tried: ${tried.join(', ')}`);
+
+  // The dead node was abandoned, so the NEXT scan starts on the next node...
+  const next = pool.pick();
+  assert.equal(next, 'second.example:18081', 'the next scan moves on by itself');
+
+  // ...and the abandoned node is refused by the pool from then on.
+  assert.throws(() => pool.assertCurrent(first), /one Monero node/);
+  console.log('[pool-door] dead node: refused in-scan, next scan moved to', next);
+});
+
+test('a healthy answer leaves the pin alone, so the session stays on its node', async () => {
+  const pool = makePool(['only.example:18081']);
+  const node = pool.pick();
+  const served = await getBlock(node, { height: 100 }, {
+    fetchImpl: async (url) => ({
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify({
+        jsonrpc: '2.0',
+        id: '0',
+        result: {
+          blob: 'ab'.repeat(64),
+          json: JSON.stringify({ tx_hashes: [] }),
+          block_header: { hash: 'a'.repeat(64), height: 100, prev_hash: 'c'.repeat(64) },
+        },
+      }),
+    }),
+    pool,
+    timeoutMs: 5000,
+  });
+  assert.equal(served.address, node);
+  assert.equal(pool.pick(), node, 'a success must not advance the pool');
+  console.log('[pool-door] healthy answer: pin kept');
 });

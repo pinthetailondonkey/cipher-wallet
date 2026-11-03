@@ -14,6 +14,18 @@
 //
 // One node per scan is nodes.js's rule and this file does not weaken it: a
 // caller pins the node, and every request checks it is still the pinned one.
+//
+// CHECKED BEFORE THE SOCKET, NOT AFTER THE ANSWER. These doors used to ask the
+// pool only once the bytes were already in hand, so a scan learned the node had
+// been abandoned after it had already disclosed the request to it. The rule is
+// worth nothing in that order: the point of refusing is to keep a stranger from
+// receiving the query. Both doors now check first, and a pool that refuses
+// means no request is made at all.
+//
+// A DEAD NODE ENDS THE SCAN, NOT THE PIN. A transport failure abandons the node
+// in the pool, so the NEXT scan starts on the next node; the current call still
+// refuses. Quietly retrying on another node inside one call would stitch two
+// operators' answers into one result and make the refusals above meaningless.
 
 import { hex } from '@scure/base';
 
@@ -44,9 +56,16 @@ function sameHost(asked, url) {
 
 // One JSON-RPC call. Every failure mode below is a refusal, and each says which
 // one it is: a caller must not read "the node did not answer" as "no payment".
-async function call(node, { method, params }, { fetchImpl = globalThis.fetch, timeoutMs = 10000, timeoutSignal } = {}) {
+async function call(node, { method, params }, {
+  fetchImpl = globalThis.fetch, timeoutMs = 10000, timeoutSignal, pool = null,
+} = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('A node call needs a way to fetch.');
   const address = cleanNode(node);
+
+  // Before the socket: is this still the pinned node? A refusal here costs
+  // nothing and keeps the query from reaching a server the scan has left.
+  if (pool) pool.assertCurrent(address);
+
   const url = `http://${address}/json_rpc`;
 
   // A node that takes the connection and then says nothing is a stall, and a
@@ -73,6 +92,11 @@ async function call(node, { method, params }, { fetchImpl = globalThis.fetch, ti
         signal: timeoutSignal ?? controller.signal,
       });
     } catch (error) {
+      // The node did not answer at all: it is dead for this wallet, but only
+      // for the NEXT scan. Abandoning it here is not a failover - this call
+      // still refuses, and nothing is retried on another node inside it.
+      // Optional-call: a caller may hold a pool that only answers the check.
+      if (pool) pool.abandon?.(address);
       throw noAnswer(error);
     }
     if (!response || typeof response.text !== 'function') {
@@ -114,8 +138,8 @@ async function call(node, { method, params }, { fetchImpl = globalThis.fetch, ti
 // What the node says about itself. A node whose chain is behind its own target
 // height does not have the block that was asked for, and a node on another
 // network is serving a different chain entirely.
-export async function getInfo(node, { expectNetwork = 'mainnet', ...options } = {}) {
-  const { result, address } = await call(node, { method: 'get_info' }, options);
+export async function getInfo(node, { expectNetwork = 'mainnet', pool = null, ...options } = {}) {
+  const { result, address } = await call(node, { method: 'get_info' }, { ...options, pool });
   const height = Number(result.height);
   const target = Number(result.target_height);
   if (!Number.isInteger(height) || height < 0 || height > MAX_HEIGHT) {
@@ -170,8 +194,8 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
     params = { height };
   }
 
-  const { result, address } = await call(node, { method: 'get_block', params }, options);
-  if (pool) pool.assertCurrent(node);
+  const { result, address } = await call(node, { method: 'get_block', params },
+    { ...options, pool });
 
   if (typeof result.blob !== 'string' || !HEX.test(result.blob) || result.blob.length % 2 !== 0 || result.blob.length === 0) {
     throw new Error(`The Monero node ${address} answered without a block blob this build can read.`);
@@ -242,6 +266,10 @@ export async function getTransactions(node, hashes, { pool = null, ...options } 
   }
 
   const address = cleanNode(node);
+  // Before the socket, exactly as the JSON-RPC door does: a pool that refuses
+  // this node must mean the request never leaves, or the refusal is a receipt
+  // for a disclosure that already happened.
+  if (pool) pool.assertCurrent(address);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new Error('A node call needs a way to fetch.');
 
@@ -267,6 +295,11 @@ export async function getTransactions(node, hashes, { pool = null, ...options } 
         signal: options.timeoutSignal ?? controller.signal,
       });
     } catch (error) {
+      // The node did not answer at all: it is dead for this wallet, but only
+      // for the NEXT scan. Abandoning it here is not a failover - this call
+      // still refuses, and nothing is retried on another node inside it.
+      // Optional-call: a caller may hold a pool that only answers the check.
+      if (pool) pool.abandon?.(address);
       throw noAnswer(error);
     }
     if (!response || typeof response.text !== 'function') {
@@ -307,7 +340,6 @@ export async function getTransactions(node, hashes, { pool = null, ...options } 
       }
       bytes.push(hex.decode(asHex));
     }
-    if (pool) pool.assertCurrent(node);
     return { bytes, address, asked };
   } finally {
     if (timer) clearTimeout(timer);

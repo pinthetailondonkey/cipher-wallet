@@ -216,13 +216,22 @@ test('a node still syncing is a failed read, never a chain that is missing block
   witness('sync', '100 of 300 refused');
 });
 
-test('the pinned node is checked on every answer, so one scan cannot straddle two servers', async () => {
-  let checked = 0;
-  const pool = { assertCurrent: () => { checked += 1; throw new Error('A scan runs against one Monero node. Refusing to stitch results from two.'); } };
+// O6. This test used to assert `checked === 1` with the witness "checked after
+// the answer", which was true and was the defect: the pool was asked once the
+// node had already received the query. A refusal that arrives after the
+// disclosure keeps nothing from the stranger. It now proves the order.
+test('the pinned node is checked BEFORE the request, so a refusal never discloses it', async () => {
+  const log = [];
+  const pool = {
+    assertCurrent: () => {
+      log.push('assert');
+      throw new Error('A scan runs against one Monero node. Refusing to stitch results from two.');
+    },
+  };
   await assert.rejects(
-    getBlock(NODE, { hash: HASH }, { fetchImpl: async () => rpc({ blob: '00' }), pool }),
+    getBlock(NODE, { hash: HASH }, { fetchImpl: async () => { log.push('fetch'); return rpc({ blob: '00' }); }, pool }),
     /Refusing to stitch/,
   );
-  assert.equal(checked, 1);
-  witness('pinned node', 'checked after the answer');
+  assert.deepEqual(log, ['assert'], 'the pool refuses before any request is made');
+  witness('pinned node', 'checked before the socket', `log=${log.join(' -> ')}`);
 });
