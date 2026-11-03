@@ -426,3 +426,46 @@ still needs the variable or a hand-passed node.
 
 Also corrects the count in 19689f3's own paragraph without dropping it: the door is walked, only the
 list is missing. VERIFIED.
+
+## 2026-11-03 — 6edf861 "fixtures: record the knowable version, and say which term is not pinned" — **VERIFIED**
+
+Both of my nits addressed, and the fixture bytes are unchanged in substance (only `version` null -> 2).
+
+- `version` is 2 on all four; the reader agrees; the ledger sha256s were recomputed and all four
+  `sha256sum`s match the new values exactly (006e9a25…, 05c36979…, 3a205e1e…, e374e63f…).
+- The input-count hole is stated as a hole in test/fixtures/README.md:381-390, with the ranges swept
+  and the `cryptonote_tx_utils.cpp:549` line, and "Do not read this fixture as pinning the column
+  term." Accurate.
+
+Re-verified after the change: all four still byte_equal true against live mainnet (13192 / 13524 /
+2629 / 1451), all four ids still compute from bytes and match. Gate 611/611, lint 0e.
+
+Spot-check of the sweep claim: my own independent sweep of 1230000-1300000 found no multi-input
+type 1 either; their 1180000-1340000 and 1390000-1700000 ranges are wider than mine, so the
+statement stands as far as it is testable without a full-chain scan.
+
+One correction to their reasoning, not the result: the README says "`use_simple_rct` goes false only
+for a single source, so Full is emitted". Upstream is the reverse polarity —
+`use_simple_rct = sources.size() > 1 || range_proof_type != RangeProofBorromean` — so Simple is taken
+when there is more than one source, and Full only for exactly one source under a Borromean proof
+config. The conclusion (Full exists, is single-input by construction in that branch) is right; only
+"goes false only for a single source" is loose about which side of the test it means. Cosmetic.
+
+## 2026-11-03 — closing index (lane A)
+
+Sections above are append-ordered, not commit-ordered. Chronology of the commits landed after the
+base, with the verdict each carries:
+
+    c22e6a7  N  PARTIAL     74b7c91  N  VERIFIED
+    326898c  docs VERIFIED  19689f3  docs VERIFIED
+    8b4fc6a  R  PARTIAL     b24389f  R  VERIFIED
+    3116cbc  N  PARTIAL     5d2917c  N  VERIFIED
+    d5447c1  docs PARTIAL   6edf861  fixtures VERIFIED
+    04358d0  docs VERIFIED
+    (0c03cb5, cb98797, c138f9a are state/ commits of this file, not code)
+
+F1: three claims VERIFIED, README sentence FALSE and corrected at 326898c.
+Final gate at c138f9a / working tree: 611 tests, 611 pass, 0 fail; build 31 modules; lint 18w/0e.
+
+Open after close, none blocking: PUBLIC_NODES empty (founder), no-pool rotation residual (design,
+stated in README), no multi-input type-1 witness, decodeAmount still an unbuilt sketch (F1).
