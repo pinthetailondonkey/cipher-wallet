@@ -137,3 +137,27 @@ export function createNodePool({ nodes = PUBLIC_NODES, override = '', allowClear
 // The override's name, read by whatever builds this wallet. Exported so the
 // name exists in one place: CIPHER_XMR_NODE, one address, host:port.
 export const OVERRIDE_ENV = 'CIPHER_XMR_NODE';
+
+// THE RUNTIME DOOR. The constant above names the variable; this is the only
+// function that reads it. The read is a function of an explicit environment
+// (defaulting to the process's) rather than a value captured when this module
+// was first imported: a captured value would freeze whatever the launcher
+// happened to have set, could not be tested without mutating the process, and
+// would make "set it and the next scan uses it" untrue. Reading it here is what
+// turns OVERRIDE_ENV from a name into a door.
+export function nodeOverride(env = globalThis.process?.env) {
+  if (!env) return '';
+  const raw = env[OVERRIDE_ENV];
+  return raw === undefined || raw === null ? '' : String(raw).trim();
+}
+
+// The one entry point a scan uses to find its node. The environment decides
+// between the person's own node and the shipped list; createNodePool owns the
+// refusal when the answer is "nothing is configured", so a wallet with nowhere
+// to go says that by name instead of failing somewhere deeper with a socket
+// error. An override is the person's own address, so it carries its own
+// clearnet allowance; the shipped list needs one written on it.
+export function nodeSourceFromEnv({ env = globalThis.process?.env, nodes = PUBLIC_NODES,
+  allowClearnet = false } = {}) {
+  return createNodePool({ nodes, override: nodeOverride(env), allowClearnet });
+}
