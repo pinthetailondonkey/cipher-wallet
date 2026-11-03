@@ -453,3 +453,94 @@ test('O1: a changed environment value is a different pool, not a stale session',
   assert.equal(calls.length, 2, 'each configuration reached its own node');
   console.log('[pool-door] env change rebuilt the pool');
 });
+
+// ---------------------------------------------------------------------------
+// The two defects the cache introduced, each with the test that would have
+// caught it.
+//
+// D1: pick() was called only when the pool was BUILT. After a transport failure
+// abandon() empties the session, and every later no-pool call reused the cached
+// pool and was refused with the stitching sentence - forever, with no request -
+// though nothing had been stitched, because nothing had been asked. The pool is
+// now re-picked on every use, so the honest sentence is pick()'s.
+//
+// D2: the env-object cache was keyed on object identity alone, so editing the
+// same object in place kept the stale pool. It is keyed on the configuration
+// value now.
+// ---------------------------------------------------------------------------
+function okFetch(calls) {
+  return async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify({
+        jsonrpc: '2.0',
+        id: '0',
+        result: {
+          blob: 'ab'.repeat(64),
+          json: JSON.stringify({ tx_hashes: [] }),
+          block_header: { hash: 'a'.repeat(64), height: 1, prev_hash: 'c'.repeat(64) },
+        },
+      }),
+    };
+  };
+}
+
+test('O1/D1: after a transport failure the next no-pool call re-picks, and names the real refusal', async () => {
+  const env = { [ENV_KEY]: 'dead.example:18081' };
+  const attempts = [];
+
+  await assert.rejects(
+    getBlock('dead.example:18081', { height: 1 }, {
+      env, timeoutMs: 5000,
+      fetchImpl: async (url) => { attempts.push(url); throw new Error('ECONNREFUSED'); },
+    }),
+    /did not answer/,
+    'the first call is a transport failure',
+  );
+  assert.equal(attempts.length, 1);
+
+  // Same configuration, a fetch that would succeed. The node was abandoned, so
+  // there is nothing left to ask - but the refusal must be the exhausted-pool
+  // sentence, not "Refusing to stitch results from two", which accuses the call
+  // of stitching when it never asked anyone anything.
+  await assert.rejects(
+    getBlock('dead.example:18081', { height: 1 }, {
+      env, timeoutMs: 5000, fetchImpl: okFetch(attempts),
+    }),
+    (error) => /No configured Monero node answered/.test(error.message)
+      && !/stitch/i.test(error.message),
+    'the second call reports an exhausted pool, not a stitched scan',
+  );
+  assert.equal(attempts.length, 1, 'and still makes no second request');
+  console.log('[pool-door] D1: abandoned node, honest exhausted-pool refusal');
+});
+
+test('O1/D1 control: a pool with a second node re-picks it after the first dies', async () => {
+  // The env door names one node, so rotation is shown on the pool itself: the
+  // same re-pick path a list-backed pool would take.
+  const { createNodePool } = await import('../src/monero/nodes.js');
+  const pool = createNodePool({ nodes: ['first.example:18081', 'second.example:18081'], allowClearnet: true });
+  const first = pool.pick();
+  pool.abandon(first);
+  assert.equal(pool.pick(), 'second.example:18081', 'the next scan starts on the next node');
+  console.log('[pool-door] D1: list pool rotates after abandon');
+});
+
+test('O1/D2: editing the same env object in place rebuilds the pool', async () => {
+  const env = { [ENV_KEY]: 'first.example:18081' };
+  const calls = [];
+  await getBlock('first.example:18081', { height: 1 },
+    { env, fetchImpl: okFetch(calls), timeoutMs: 5000 });
+  assert.equal(calls.length, 1);
+
+  env[ENV_KEY] = 'second.example:18081';
+  await getBlock('second.example:18081', { height: 1 },
+    { env, fetchImpl: okFetch(calls), timeoutMs: 5000 });
+
+  assert.equal(calls.length, 2, 'the second configuration was actually asked');
+  assert.match(calls[1], /second\.example:18081/, 'and it was the NEW host');
+  console.log('[pool-door] D2: in-place env change rebuilt the pool ->', calls[1]);
+});

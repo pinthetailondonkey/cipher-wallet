@@ -28,7 +28,7 @@
 // operators' answers into one result and make the refusals above meaningless.
 
 import { hex } from '@scure/base';
-import { createPinnedPool, nodeSourceFromEnv } from './nodes.js';
+import { createPinnedPool, nodeSourceFromEnv, OVERRIDE_ENV } from './nodes.js';
 
 export const MAX_HEIGHT = 0xffffffff;
 
@@ -58,34 +58,52 @@ export const MAX_HEIGHT = 0xffffffff;
 // would discard the sticky session and the abandon/rotation state, so "one node
 // per scan" would only hold inside a single call - true on the page and false
 // in the wallet. The resolver is lazy (reading the environment at import is
-// exactly what c22e6a7 removed) and keyed on the configuration it was built
-// from: a changed override builds a new pool, an injected env object gets its
-// own (so tests cannot leak a session into one another), and the process
-// environment gets one per value.
+// exactly what c22e6a7 removed) and keyed on the CONFIGURATION, not only on
+// which object carried it: the key is the override value, so editing an env
+// object in place rebuilds, and the process environment gets one pool per value.
+//
+// RE-PICKED ON EVERY USE. pick() is idempotent while a session exists and takes
+// the next node after an abandon. Without that, a transport failure emptied the
+// cached session and every later call was refused with the stitching sentence -
+// forever, with no request made, because nothing had been stitched: nothing had
+// been asked. With it, the next call re-picks (the next node for a list) and,
+// when the pool is genuinely exhausted, fails with pick()'s named
+// "No configured Monero node answered. This is a failed read..." instead.
 const POOLS_BY_ENV = new WeakMap();
 const POOLS_BY_PROCESS = new Map();
 
-function buildConfiguredPool(env) {
+function envKey(env) {
+  return String(env?.[OVERRIDE_ENV] ?? '');
+}
+
+function buildConfiguredPool(env, key) {
   const configured = nodeSourceFromEnv({ env });
   // A fresh pool has no session. Taking it here is what makes the first assert
   // the pinned one, and it is where "every configured node has failed" is
   // refused - before the socket, not instead of it.
   configured.pick();
-  return configured;
+  return { key, pool: configured };
 }
 
 function configuredPool(env) {
   if (env && typeof env === 'object') {
+    const key = envKey(env);
     const hit = POOLS_BY_ENV.get(env);
-    if (hit) return hit;
-    const built = buildConfiguredPool(env);
+    if (hit && hit.key === key) {
+      hit.pool.pick();      // idempotent; re-picks after an abandon
+      return hit.pool;
+    }
+    const built = buildConfiguredPool(env, key);
     POOLS_BY_ENV.set(env, built);
-    return built;
+    return built.pool;
   }
-  const key = String(globalThis.process?.env?.CIPHER_XMR_NODE ?? '');
+  const key = envKey(globalThis.process?.env);
   const hit = POOLS_BY_PROCESS.get(key);
-  if (hit) return hit;
-  const built = buildConfiguredPool(undefined);
+  if (hit) {
+    hit.pick();
+    return hit;
+  }
+  const built = buildConfiguredPool(undefined, key).pool;
   POOLS_BY_PROCESS.set(key, built);
   return built;
 }
