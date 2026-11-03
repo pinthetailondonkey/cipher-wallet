@@ -340,3 +340,44 @@ The file's own sha256, spaced as always:
     1160e8d765ac34bb73015ea39b49ba4a 7c0d82a87b61d8bc3902db5484121a8d
 
 Id and controls are proven by `test/monero-tx-corpus.test.mjs`.
+
+## monero-tx-rct-{1,2,4,5}.json
+
+The four RingCT types this reader did not cover, pinned so it could learn them.
+Each is ONE real mainnet non-miner transaction, captured over Tor by
+`scripts/pin-tx.mjs`, at the height and hash-list index recorded in its own
+`source` block.
+
+Provenance is complete per fixture: node, nettype, transport (Tor socks5-hostname,
+so the node saw an exit), capture timestamp, block height and hash, transaction
+index plus BOTH index conventions (`txIndexInBlock` is 1-based with the miner at
+0; `txHashListIndex` is 0-based and is what a re-deriver indexing `tx_hashes`
+must use), the endpoint pair, a `rederive` recipe, and the layout the type
+carries. `sha256` is over the file as committed, with a space after character 32
+for the pre-commit hook, so remove the space before checking.
+
+| type | name | height | hash-list index | bytes | sha256 |
+|---|---|---|---|---|---|
+| 1 | RCTTypeFull | 1600000 | 0 | 13192 | `276ed43ff18d5e420e2561587fd4d871 b43c317d59b713dfa944e06a0cf6eddd` |
+| 2 | RCTTypeSimple | 1500000 | 0 | 13524 | `6441afed6cd0d43e09aacc06d0dc5905 a4e3d995d60d070e1b2d7e080776b70b` |
+| 4 | RCTTypeBulletproof2 | 1800000 | 0 | 2629 | `1a9cfa979a9107893b4664b3b82a7467 9e2ab2ae84651ec706a11f6604c7c551` |
+| 5 | RCTTypeCLSAG | 2300000 | 0 | 1451 | `d784ee94d6d1d8dffaf8a53571eff3a9 c14ed8f0290699131931a77506886827` |
+
+Shape notes, because each is a trap rather than a detail:
+
+- **Type 1 (Full)** writes **one** MLSAG for the whole transaction. The matrix is
+  `mixin + 1` rows by `inputs + 1` columns, so "one MLSAG per input" is correct
+  for type 2 and wrong here.
+- **Type 2 (Simple)** is the only type that writes `pseudoOuts` in the **base**,
+  before `ecdhInfo`. Every Bulletproof-family type writes them in the prunable
+  instead; Full writes none at all.
+- **Types 1 and 2** use **Borromean** range proofs, one per output, each 193
+  keys. Types 3, 4, 5 and 6 use Bulletproof proofs, whose count is a raw 4-byte
+  FIELD for type 3 and a varint for 4, 5 and 6.
+- **Types 4 and 5** are the compressed-ecdh types: eight bytes of truncated
+  amount per output and **no mask**, which is derived rather than carried. Types
+  1, 2 and 3 carry a 32-byte mask and a 32-byte amount.
+
+The type numbering is the `rctTypes.h` enum at the pinned commit, where 3 is
+Bulletproof and 6 is BulletproofPlus, so 4 and 5 are Bulletproof2 and CLSAG and
+not "more Bulletproof".

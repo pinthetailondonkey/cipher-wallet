@@ -264,6 +264,49 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
         throw new Error(`That ${label} is RingCT type 3 without a key input to sign, so this build does not read it.`);
       }
       prunableEnd = walkType3Prunable(cursor, inputCount, outputCount, ringSize);
+    } else if ((read === 4n || read === 5n) && label !== 'miner transaction') {
+      // RingCT types 4 (RCTTypeBulletproof2) and 5 (RCTTypeCLSAG). These are the
+      // first types with a COMPRESSED ecdh entry: eight bytes of truncated
+      // amount per output and NO mask, because the mask is DERIVED
+      // (rctTypes.h compressed_ecdh in serialize_rctsig_base). Type 4 still
+      // signs with one MLSAG per input; type 5 uses one CLSAG per input, the
+      // only structural difference between them, so one walk takes the shape as
+      // an argument rather than being written twice.
+      rctType = Number(read);
+      cursor.varint('ringct fee');
+      for (let i = 0; i < outputCount; i += 1) cursor.take(8, `output ${i} ecdh amount`);
+      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      baseEnd = cursor.at;
+      const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
+      if (inputCount < 1 || ringSize < 1) {
+        throw new Error(`That ${label} is RingCT type ${read} without a key input to sign, so this build does not read it.`);
+      }
+      prunableEnd = walkBulletproof2FamilyPrunable(
+        cursor, inputCount, outputCount, ringSize, read === 5n ? 'CLSAG' : 'MLSAG',
+      );
+    } else if ((read === 1n || read === 2n) && label !== 'miner transaction') {
+      // RingCT types 1 (RCTTypeFull) and 2 (RCTTypeSimple): the pre-Bulletproof2
+      // pair. Borromean range proofs, and an UNCOMPRESSED ecdh entry per output
+      // (32-byte mask then 32-byte amount). Type 2 additionally writes
+      // pseudoOuts in the BASE before ecdhInfo (rctTypes.h
+      // serialize_rctsig_base); type 1 carries none, because its single MLSAG
+      // signs every input at once.
+      rctType = Number(read);
+      cursor.varint('ringct fee');
+      if (read === 2n) {
+        for (let i = 0; i < inputCount; i += 1) cursor.take(32, `input ${i} pseudo-output`);
+      }
+      for (let i = 0; i < outputCount; i += 1) {
+        cursor.take(32, `output ${i} ecdh mask`);
+        cursor.take(32, `output ${i} ecdh amount`);
+      }
+      for (let i = 0; i < outputCount; i += 1) cursor.take(32, `output ${i} commitment`);
+      baseEnd = cursor.at;
+      const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
+      if (inputCount < 1 || ringSize < 1) {
+        throw new Error(`That ${label} is RingCT type ${read} without a key input to sign, so this build does not read it.`);
+      }
+      prunableEnd = walkBorromeanPrunable(cursor, inputCount, outputCount, ringSize, read === 1n);
     } else if (read !== 0n) {
       throw new Error(
         `That ${label} carries RingCT type ${read}. Every miner transaction Monero has mined since RingCT is type Null, so another type means a prunable section this build refuses to guess its way through. This is a refused read, not a finding.`,
@@ -323,6 +366,100 @@ function walkType6Prunable(cursor, inputCount, outputCount, ringSize) {
   }
   // One pseudo-output commitment per input.
   cursor.take(32 * inputCount, 'pseudo-output commitments');
+  return cursor.at;
+}
+
+// The type 4 and type 5 prunable section. Both carry Bulletproof(s) and a
+// pseudoOuts array; they differ only in the signature that signs each input.
+//
+// Bulletproof count: a varint for both types (the 4-byte FIELD is type 3's
+// alone, before the switch). Each bulletproof is six fixed keys then L and R,
+// each count-prefixed, exactly as serialize_rctsig_prunable writes it.
+//
+// Then the per-input signatures, with NO count prefix because the counts come
+// from the transaction structure:
+//   MLSAG (type 4): ss is ringSize rows by two columns, then one cc. Signing
+//     every input looks like the type-3 layout, and the type-3 walker is NOT
+//     reusable here because the base differs (compressed ecdh), so the field
+//     offsets would drift silently if it were.
+//   CLSAG (type 5): ringSize scalars, then c1, then D.
+// Then one pseudo-output per input.
+function walkBulletproof2FamilyPrunable(cursor, inputCount, outputCount, ringSize, signature) {
+  const bpCount = Number(cursor.varint('bulletproof count'));
+  if (bpCount > outputCount) {
+    throw new Error('That transaction carries more Bulletproof proofs than outputs, which Monero refuses.');
+  }
+  let maxAmounts = 0;
+  for (let p = 0; p < bpCount; p += 1) {
+    cursor.take(32 * 6, `Bulletproof ${p} A S T1 T2 taux mu`);
+    const left = Number(cursor.varint(`Bulletproof ${p} L count`));
+    cursor.take(32 * left, `Bulletproof ${p} L`);
+    const right = Number(cursor.varint(`Bulletproof ${p} R count`));
+    cursor.take(32 * right, `Bulletproof ${p} R`);
+    cursor.take(32 * 3, `Bulletproof ${p} a b t`);
+    if (left < 6 || left !== right) {
+      throw new Error(`That transaction's Bulletproof ${p} has L/R sizes ${left}/${right}, which Monero refuses.`);
+    }
+    maxAmounts += 2 ** (left - 6);
+  }
+  if (maxAmounts < outputCount) {
+    throw new Error(`That transaction's Bulletproof proofs cover ${maxAmounts} amounts but it has ${outputCount} outputs, which Monero refuses.`);
+  }
+  if (signature === 'CLSAG') {
+    for (let i = 0; i < inputCount; i += 1) {
+      cursor.take(32 * ringSize, `input ${i} CLSAG scalars`);
+      cursor.take(32, `input ${i} CLSAG c1`);
+      cursor.take(32, `input ${i} CLSAG D`);
+    }
+  } else {
+    for (let i = 0; i < inputCount; i += 1) {
+      cursor.take(32 * ringSize * 2, `input ${i} MLSAG ss matrix`);
+      cursor.take(32, `input ${i} MLSAG cc`);
+    }
+  }
+  cursor.take(32 * inputCount, 'pseudo-output commitments');
+  return cursor.at;
+}
+
+// The type 1 and type 2 prunable section: Borromean range proofs, then the
+// signature, then pseudoOuts for type 2 only.
+//
+// A Borromean rangeSig is `asig` then `Ci`, and asig is two arrays of 64 keys
+// plus one key: 64 * 32 s0, 64 * 32 s1, 32 ee, then Ci is `key64`, 64 * 32. So
+// one proof is exactly 193 keys, and there is one proof per OUTPUT, with the
+// count fixed by the output count and therefore unprefixed. Nothing is counted
+// or bounded on the wire.
+//
+// The signature part differs by type and is the trap:
+//   Full (1): ONE MLSAG for the whole transaction. mg_elements is 1 for Full,
+//     so the ss matrix has one row per INPUT and two columns, then one cc. A
+//     reader that assumed one MLSAG per input would land on the right offset
+//     only when the transaction has one input.
+//   Simple (2): one MLSAG per input, ringSize rows by two columns, one cc each.
+function walkBorromeanPrunable(cursor, inputCount, outputCount, ringSize, full) {
+  for (let o = 0; o < outputCount; o += 1) {
+    cursor.take(32 * 64, `output ${o} Borromean s0`);
+    cursor.take(32 * 64, `output ${o} Borromean s1`);
+    cursor.take(32, `output ${o} Borromean ee`);
+    cursor.take(32 * 64, `output ${o} Borromean Ci`);
+  }
+  // Columns are `inputs + 1` in BOTH layouts, because the matrix carries the
+  // signature plus the aggregate column. rows are what differ: Full signs
+  // everything at once, so it has ONE matrix of mixin + 1 rows; Simple has one
+  // matrix per input, each of ringSize rows. Reading Full as "rows = inputs"
+  // is correct only for a one-input transaction.
+  if (full) {
+    cursor.take(32 * ringSize * (inputCount + 1), 'MLSAG ss matrix (one for the whole transaction)');
+    cursor.take(32, 'MLSAG cc');
+  } else {
+    for (let i = 0; i < inputCount; i += 1) {
+      cursor.take(32 * ringSize * 2, `input ${i} MLSAG ss matrix`);
+      cursor.take(32, `input ${i} MLSAG cc`);
+    }
+  }
+  // No pseudoOuts here. The prunable array is written only for Bulletproof,
+  // Bulletproof2, CLSAG and BulletproofPlus (rctTypes.h serialize_rctsig_prunable);
+  // Simple carries them in the base, and Full carries none at all.
   return cursor.at;
 }
 
