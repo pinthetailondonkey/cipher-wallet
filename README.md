@@ -113,10 +113,13 @@ The transport for reading blocks is ruled: a shipped list of public nodes in
 `CIPHER_XMR_NODE` is set — one node per scan, sticky, and fail-closed, so a node
 that dies mid-scan refuses the scan rather than stitching two operators together.
 **The list still ships empty**, so a scan has no node to ask until the founder
-names addresses; capture scripts take `CIPHER_XMR_NODE` directly. Nothing reads
-the variable at runtime yet either: `nodeClient.js` takes the node its caller
-pins, and `nodes.js` is not imported by it. The selection is built and tested,
-the wiring is not.
+names addresses; capture scripts take `CIPHER_XMR_NODE` directly. The variable
+**is** now read at runtime, through one named door (`nodeOverride` /
+`nodeSourceFromEnv` in `nodes.js`), and the pinned-node check happens before the
+socket on every door rather than after the answer. What is still missing is a
+caller: `nodeClient.js` does not import `nodes.js`, and no `src/` code passes a
+pool, so a caller that omits one gets no pre-socket enforcement. The selection is
+built, tested and reachable; nothing opens the door yet.
 
 ## The vault is two layers
 
