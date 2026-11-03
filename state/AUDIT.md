@@ -223,3 +223,185 @@ Independent survey through the same node/Tor path, first 3 non-miner txs per hei
 
 All four types are present on mainnet and findable in minutes. "Not found on mainnet" is not
 available as a reason for any of types 1, 2, 4, 5. Lane R must capture, or state a different reason.
+
+## 2026-11-03 — Lane N, 3116cbc "Node selection: a door with no pool walks the environment itself" — **PARTIAL**
+
+Scope: nodeClient.js, nodes.js, monero-node-client.test.mjs, monero-nodes.test.mjs, pool-door.test.mjs.
+All lane-N files. Gate at the commit: 572/572 pass, 0 fail; build 31 modules; lint 0 errors. Matches.
+
+VERIFIED core claim, independently, against base 19689f3 and HEAD:
+    env={CIPHER_XMR_NODE:'named.example:18081'}, getBlock('stranger.example:18081', ..., {env})
+      19689f3: 1 network call to http://stranger.example:18081/json_rpc (accepted the stranger)
+      HEAD   : refusal "A scan runs against one Monero node...", 0 network calls
+Same 0-call refusal on getTransactions and getInfo. Env-set path reaches the named host; process-env
+path does too; createPinnedPool seeds `session` so the no-env fallback does not refuse everything
+(the bug I flagged pre-commit is fixed and its regression test is real). `configured.pick()` at
+nodeClient.js:73 fixes the fresh-pool assert.
+
+TWO DEFECTS, both reproduced (hence PARTIAL not VERIFIED):
+
+1. NO NEXT SCAN AFTER ABANDON. `configuredPool()` caches the pool and `pick()` is called only at
+   build time (nodeClient.js:73). After a transport failure `pinned.abandon(address)` nulls the
+   session; every later no-pool call returns the same cached pool and `assertCurrent` throws, with
+   no `pick()` and no network call, forever:
+
+       env={CIPHER_XMR_NODE:'dead.example:18081'}; call1 fetch throws; call2/3/4 use a 200 fetch
+       call 1 REFUSED "did not answer: ECONNREFUSED"
+       call 2,3,4 REFUSED "A scan runs against one Monero node. Refusing to stitch..."
+       network calls total: 1   (the node coming back is never re-asked)
+
+   This contradicts nodes.js:9-12 and the commit's own "the NEXT scan starts on the next node, from
+   the start": nothing starts a next scan. For a one-node override the remaining refusal should at
+   least be `pick()`'s named "No configured Monero node answered. This is a failed read..." rather
+   than the stitching sentence. With a multi-node shipped list (once the founder fills it), rotation
+   through the doors never happens at all. Missing test: a two-call sequence across an abandon.
+
+2. IN-PLACE ENV CHANGE DOES NOT REBUILD. For an injected env object the cache key is object identity
+   (`POOLS_BY_ENV` WeakMap, nodeClient.js:61-66), so changing `env.CIPHER_XMR_NODE` in place reuses
+   the stale pool:
+
+       env={CIPHER_XMR_NODE:'first...'}; getBlock(first) OK; env.CIPHER_XMR_NODE='second';
+       getBlock(second) -> "Refusing to stitch", 0 calls to second
+
+   The commit says "a changed value builds a new pool" and the test of that name uses two different
+   env objects, so it does not cover the in-place case. The process-env path (keyed by the value
+   string) is correct.
+
+## 2026-11-03 — Lane R, 8b4fc6a "pin-tx: capture the shapes the reader refuses, and pin one of each" — **PARTIAL**
+
+Fixture authenticity: all four PROVEN against live mainnet, not taken on trust. Method: independent
+re-capture over Tor by height -> block hash -> the block's own tx_hashes -> /get_transactions, byte
+compare. Provenance block read independently of the fixture's own `source`.
+
+    rct-1 h1600000 tx_hashes[0] blockHash match true bytes_equal true 13192B
+    rct-2 h1500000 tx_hashes[0] blockHash match true bytes_equal true 13524B
+    rct-4 h1800000 tx_hashes[0] blockHash match true bytes_equal true  2629B
+    rct-5 h2300000 tx_hashes[0] blockHash match true bytes_equal true  1451B
+
+Not hand-written: every byte equals what the node serves today. Type claim corroborated by the
+node's own `as_json` rct_signatures.type = 1/2/4/5 on all four, and each `declared byteLength`
+equals the actual `asHex` length. `txHashListIndex` 0 matches the live listing index for each, and
+the newly recorded `txIndexConvention` closes the 1-based/0-based ambiguity I raised at 1750000.
+
+Gate at 8b4fc6a: 592 tests / 592 pass / 0 fail; build 31 modules; lint 18 warnings 0 errors. Matches
+the claim; 572 -> 592 is the 20 corpus tests the four new files add (each gets a needle + 4 controls
+entry points, all taking the refusal branch).
+
+Same-pattern check (fixture not self-consistent-only): the needle here asserts the refusal regex, and
+the 4 mutated controls are skipped because `probe === null`
+(test/monero-tx-corpus.test.mjs:58-70). So for these four commits nothing is proven by a computed
+id. The id is evidenced only by the block's hash list. That is correct for a red-first pin, but it is
+weaker than the type-3 and type-6 pins and must not be described as node-proven until a reader
+computes the id.
+
+PARTIAL, three reasons:
+
+1. NO READER YET. Deliverable is capture + refusal + read + needle + controls. Only steps 1-2
+   landed; `readTransaction` still refuses all four and no `test/rct-type-*.test.mjs` exists. The
+   fixture bytes are committed with `rctType: null`, so nothing in the tree can test them beyond the
+   refusal sentence.
+2. PROVENANCE SCHEMA GAP. `source` carries node, transport, capturedAt, blockHeight, blockHash,
+   rederive, index fields (good) but no `endpoint`; the ladder in the work order names it. Mixed:
+   `rederive` names pin-tx.mjs, which implies get_block + /get_transactions, so it is derivable
+   rather than absent. Same gap exists in five pre-existing fixtures.
+3. NO LEDGER ENTRY. test/fixtures/README.md is where this repo records each fixture's source,
+   checksum, transformation and re-derivation. None of the four files is listed, and their sha256s
+   are not recorded anywhere. For a corpus whose whole argument is provenance, an undocumented file
+   is the weakest link.
+
+`refusedByReader` is a genuine improvement and is honest: it records the exact sentence and leaves
+`version`/`rctType`/`shape` null instead of guessing. Commit message byte counts and tx-prefix
+digests match what I measured.
+
+## 2026-11-03 — Lane N, 5d2917c "Node selection: re-pick a cached pool, and key it on the value" — **VERIFIED**
+
+Scope: nodeClient.js + pool-door.test.mjs. Gate on a clean archive of the commit: 595/595 pass,
+build 31 modules, lint 18 warnings 0 errors. Matches. (Commit body says "Previous was 572/572"; the
+parent 8b4fc6a was 592. Bookkeeping typo only, not a gate discrepancy.)
+
+D1 reproduced fixed. Same script as at 3116cbc, env={CIPHER_XMR_NODE:'dead.example:18081'}:
+    call1 fetch throws      -> "did not answer: ECONNREFUSED"
+    call2,3 with a 200 fetch -> "No configured Monero node answered. This is a failed read..."
+    network calls total: 1
+The wrong "stitching" sentence is gone; the honest exhausted-pool refusal is `pick()`'s.
+
+D2 reproduced fixed:
+    env.CIPHER_XMR_NODE='first...'; getBlock(first) OK
+    env.CIPHER_XMR_NODE='second...' (same object); getBlock(second) OK
+    calls: first JSON-RPC, second JSON-RPC
+Both new tests are real guards: served 5d2917c's pool-door.test.mjs to 3116cbc -> 2 fail
+("O1/D1" and "O1/D2"), 21 pass; at 5d2917c all pass.
+
+RESIDUAL, named for when the shipped list is filled (not observable today, because PUBLIC_NODES is
+empty and an override is one address): re-picking on every no-pool call means a second call after an
+abandon silently moves to the next node in a multi-node list. With a caller-held pool the scan is
+still pinned per pool, but a no-pool caller has no scan boundary, so "a dead node refuses the scan
+rather than stitching two operators" holds only for callers who inject a pool. Recommend: no-pool
+calls either never rotate (single-shot) or a scan must hold a pool. Recorded as a risk, not a
+regression: at 3116cbc the same path refused forever, which was fail-closed but for the wrong
+reason, and the shipped list is currently empty.
+
+## 2026-11-03 — Lane R, b24389f "RingCT: read types 1, 2, 4 and 5" — **VERIFIED**
+
+Fixture bytes re-verified against live mainnet AFTER the commit: all four still byte_equal true,
+declared byteLength == actual, provenance now complete (endpoint added), `refusedByReader` removed,
+`rctType` numeric, ledger sha256s in test/fixtures/README.md match `sha256sum` of each file exactly
+(276ed43f…, 6441afed…, 1a9cfa97…, d784ee94…). Gate on a clean archive: 611/611 pass, build 31,
+lint 18w/0e. Matches the claim.
+
+Reader correctness, checked against upstream `rctTypes.h` at the pinned commit rather than against
+the author's own words:
+- compressed ecdh for 4/5 (`min_size = sizeof(hash8)`, mask not serialized) matches `block.js`
+  8-byte take; 1/2/3 use `FIELDS(ecdhInfo)` = 64 bytes. Correct.
+- type 2 pseudoOuts in the BASE before ecdhInfo (`rctTypes.h:331-346`); prunable pseudoOuts only for
+  3/4/5/6 (`:586-600`); type 1 none. `block.js` places they exactly so.
+- Borromean `rangeSig` = 64+64+1+64 = 193 keys/output (`rctTypes.h:192-196`), unprefixed, one per
+  output. Match.
+- Version 2 type-1 really is emitted: `cryptonote_tx_utils.cpp:549`
+  `use_simple_rct = sources.size() > 1 || range_proof_type != RangeProofBorromean`, so a 1-input
+  pre-Bulletproof tx is Full. The walker's Full branch is one matrix of `ring x (inputs+1)` then one
+  cc. Hand arithmetic on rct-1: prunLen 12832 == outs*193*32 + ring*(ins+1)*32 + 32 = 12832. type-2
+  base decodes as type byte 1 + a 6-byte fee varint + 256 == Ins*32+outs*64+outs*32; prunLen 13056
+  == outs*193*32 + ins*(ring*2*32+32). Both land exactly on the last byte.
+
+Controls now execute (probe non-null): 4 per fixture, 16 in all, and I re-ran them independently.
+Each flip lands inside its named section and every one either refuses or changes the id; none keeps
+the node's id. The recorded "base flip refuses on the two compressed types and changes the id on the
+other two" is accurate.
+
+Two nits, neither blocking:
+1. `version` stays null on all four fixtures though the reader parses it (always 2). The field is
+   nullable by contract, so not false, but now knowable.
+2. The type-1 fixture is ONE input, so the Full-only `inputs + 1` column term is exercised only as
+   `1 + 1`. A multi-input type-1 tx is rare under `use_simple_rct` (only pre-Bulletproof, and only
+   when all real inputs share an index) and my mainnet sweep of 1230000-1300000 found none; say so
+   rather than imply the 2-input Full case is pinned. Note the prunable is 12832 bytes for only 2
+   outputs: 2 proofs x 193 x 32 = 12352, i.e. 6162 bytes per output, because Borromean proofs carry
+   no aggregate compression. That is the real cost of the pre-Bulletproof types, not a sizing error.
+
+## 2026-11-03 — d5447c1 "README: every RingCT type a transaction carries is read" — **PARTIAL**
+
+Docs only. Gate at HEAD: 611/611, build 31, lint 0e.
+
+The RingCT half is TRUE and now correctly scoped: "every RingCT type a real transaction can carry
+is now read: 1..6", all nine corpus fixtures reproduce their node ids from bytes
+(needle-all.mjs: 9/9 idmatch true, every walk ends at the last byte), and the two layout traps are
+named. Types 4/5 are given their rctTypes.h names. Types 1, 2, 4 and 5 are no longer described as
+refusing. Correct.
+
+The node half is now STALE, and this is the same class of defect F1 was about — a sentence that
+outlived its code, in the opposite direction:
+
+    README.md:121  "`nodeClient.js` does not import `nodes.js`"
+    README.md:123  "nothing opens the door yet"
+
+    reality: nodeClient.js:31 `import { createPinnedPool, nodeSourceFromEnv, OVERRIDE_ENV } from
+             './nodes.js'`; :111 poolFor(); :155 and :367 `const pinned = poolFor(...)`
+
+Also stale by implication: "a caller that omits one gets no pre-socket enforcement" — 3116cbc and
+5d2917c made exactly that caller enforced. The paragraph was correct at 19689f3 and was not revisited
+when the door was wired. PARTIAL: the RingCT claim VERIFIED, the node paragraph FALSE as written.
+
+Verdict on the README as a whole: of the two sentences this audit was asked about, `RingCT amounts
+now decrypt` (F1) was FALSE and is now corrected; `every RingCT type ... is read` is now VERIFIED.
+The node-door paragraph needs the same correction it got once already.
