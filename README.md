@@ -33,7 +33,8 @@ recovery shards, and nothing here has been run against real money.
   commitment generator H to the bytes `crypto/generators.cpp` compiles in,
   recomputed from G in the test; both pads to literal bytes from the quoted
   `ecdhDecode`; the widths (eight for types 4/5/6, sixty-four for 1/2/3) to
-  seven real mainnet transactions. Then the guard that matters: `decodeRct`
+  eleven real mainnet transactions across all six types. Then the guard that
+  matters: `decodeRct`
   rebuilds the output's Pedersen commitment from the pair it decoded and refuses
   on a mismatch, and so does this build. A wrong derivation therefore produces a
   named refusal instead of a plausible number.

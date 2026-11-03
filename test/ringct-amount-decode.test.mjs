@@ -151,6 +151,11 @@ test('real transactions carry 8 or 64 bytes of ecdh per output, never 16', () =>
     'monero-tx-rct-4': 8,
     'monero-tx-rct-5': 8,
     'monero-tx-ringct-type6': 8,
+    // Three more type 6 captures, so the width rule is not resting on one.
+    'monero-tx-1in-manyout': 8,
+    'monero-tx-manyin': 8,
+    'monero-tx-smallfee': 8,
+    'monero-tx-zeroamount': 8,
   };
   for (const [name, width] of Object.entries(widths)) {
     const { bytes } = fixture(name);
