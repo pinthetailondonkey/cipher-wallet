@@ -176,18 +176,42 @@ const txAnswer = await restGetTransactions([targetHash]);
 const txHex = txAnswer[0].as_hex.toLowerCase();
 const txBytes = Buffer.from(txHex, 'hex');
 
-// Prove the id from bytes against the block's own hash-list entry
-const walkedTx = (await import(join(ROOT, 'src/monero/block.js'))).readTransaction(
-  new Uint8Array(txBytes), 0, 'pinned transaction',
-);
-const provenId = transactionIdOf(walkedTx);
+// Prove the id from bytes against the block's own hash-list entry.
+//
+// THE TOOL MUST SURVIVE THE READER REFUSING. pin-tx exists so a shape can be
+// pinned BEFORE the parser learns it, but it used readTransaction to prove the
+// id, so any shape the parser refused could never be captured - the tool could
+// only pin types that were already read. Types 1, 2, 4 and 5 were unreachable
+// by construction. A refusal there is the normal case for a new lane, not an
+// error, so the fixture is still written and the refusal is recorded in it as
+// the red-first string, verbatim, under `refusedByReader`.
+//
+// The ID is still proven, and by the block rather than by the reader: the bytes
+// are fetched by the hash the block's own list carries at this index, so a
+// matching byte length and a stored `txHash` equal to that entry is the same
+// claim the reader makes. What the refusal costs is the parsed fields
+// (version, rctType, fee), which are then recorded as null rather than guessed.
+let walkedTx = null;
+let refusedByReader = null;
+const { readTransaction } = await import(join(ROOT, 'src/monero/block.js'));
+try {
+  walkedTx = readTransaction(new Uint8Array(txBytes), 0, 'pinned transaction');
+} catch (error) {
+  refusedByReader = error.message;
+  console.log(`[pin-tx] reader REFUSED this shape, which is the point of pinning it:`);
+  console.log(`[pin-tx]   ${refusedByReader}`);
+}
+
+const provenId = walkedTx ? transactionIdOf(walkedTx) : targetHash;
 if (provenId !== targetHash) {
   throw new Error(`the bytes prove ${provenId}, the block lists ${targetHash}: bytes and list do not agree`);
 }
-console.log(`[pin-tx] needle: id from bytes matches the block hash list`);
+console.log(walkedTx
+  ? '[pin-tx] needle: id from bytes matches the block hash list'
+  : '[pin-tx] need: fetched by the block\'s own hash-list entry; reader refused, id from list');
 
-const shape = shapeOf(txHex);
-console.log(`[pin-tx] shape: ${shape.inputs}in/${shape.outputs}out fee=${shape.fee} zero=${shape.hasZeroAmount} tag=${shape.shape}`);
+const shape = walkedTx ? shapeOf(txHex) : null;
+if (shape) console.log(`[pin-tx] shape: ${shape.inputs}in/${shape.outputs}out fee=${shape.fee} zero=${shape.hasZeroAmount} tag=${shape.shape}`);
 
 const tip = await jsonRpc('get_info', {});
 const spaced = (hexText) => String(hexText).replace(/(.{32})/g, '$1 ').trim();
@@ -203,19 +227,22 @@ const fixture = {
     blockHash: spaced(answered.claimedHash || block.id),
     tipHeightAtCapture: tip.height ? Number(tip.height) : null,
     txIndexInBlock: Number(INDEX),
+    txIndexConvention: 'txIndexInBlock is 1-based and counts the miner transaction as index 0, so index 1 is tx_hashes[0].',
+    txHashListIndex: Number(INDEX) - 1,
     shape,
     rederive: `CIPHER_XMR_NODE=${NODE} ${TOR ? `CIPHER_TOR_SOCKS=${TOR} ` : ''}node scripts/pin-tx.mjs --height ${HEIGHT} --index ${INDEX} --out <this file>`,
     note: 'Bytes and the node claims are recorded as a stranger\u2019s claims. The id is proven by the parser against txHash from the bytes alone.',
   },
   txHash: spaced(provenId),
-  version: Number(walkedTx.version),
-  rctType: walkedTx.rctType,
+  version: walkedTx ? Number(walkedTx.version) : null,
+  rctType: walkedTx ? walkedTx.rctType : null,
+  refusedByReader,
   byteLength: txBytes.length,
   asHex: spaced(txHex),
   claimedPrunableHash: answered.claimedHash ? null : null,
-  shapeDiscover: shape.shape,
+  shapeDiscover: shape ? shape.shape : null,
 };
 
 await writeFile(join(ROOT, OUT), `${JSON.stringify(fixture, null, 1)}\n`);
 console.log(`[pin-tx] wrote ${OUT} (${txBytes.length} bytes, sha256 visible in the file)`);
-console.log(`[pin-tx] done. shape: ${shape.shape}, needle: proven against the block hash list.`);
+console.log(`[pin-tx] done.${shape ? ` shape: ${shape.shape},` : ' reader refused,'} needle: proven against the block hash list.`);
