@@ -298,3 +298,32 @@ test('the guard is only as strong as where the commitment came from', () => {
   );
   console.log('[ringct-amount] guard pinned at its real strength: chain commitment refuses, self-supplied does not');
 });
+
+// Near-misses, because random noise is the easy case. The failures that matter
+// are the ones a wallet would actually commit: a derivation a bit wrong, the
+// wrong output index, two outputs' ecdh swapped.
+test('near-miss derivations and mispointed info are all refused on real bytes', () => {
+  const { bytes } = fixture('monero-tx-ringct-type6');
+  const tx = readTransaction(bytes, 0, 'type6 fixture');
+  const base = new Uint8Array(32).fill(0x11);
+  const commitment = tx.outputs[0].commitment;
+  let passed = 0;
+  for (let j = 0; j < 32; j += 1) {
+    const flipped = Uint8Array.from(base);
+    flipped[j] ^= 0x01;
+    try {
+      decodeAmount({ derivation: flipped, index: 0, info: tx.outputs[0].ecdh, rctType: 6, commitment });
+      passed += 1;
+    } catch { /* refused, which is the expected branch */ }
+  }
+  assert.equal(passed, 0, 'not one single-bit derivation flip of 32 may pass');
+  assert.throws(
+    () => decodeAmount({ derivation: base, index: 1, info: tx.outputs[0].ecdh, rctType: 6, commitment }),
+    /commitment/i,
+  );
+  assert.throws(
+    () => decodeAmount({ derivation: base, index: 0, info: tx.outputs[1].ecdh, rctType: 6, commitment }),
+    /commitment/i,
+  );
+  console.log('[ringct-amount] 0/32 one-bit derivation flips pass; wrong index and swapped ecdh refused');
+});
