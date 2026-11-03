@@ -28,8 +28,77 @@
 // operators' answers into one result and make the refusals above meaningless.
 
 import { hex } from '@scure/base';
+import { createPinnedPool, nodeSourceFromEnv } from './nodes.js';
 
 export const MAX_HEIGHT = 0xffffffff;
+
+// WHICH POOL A CALL IS CHECKED AGAINST.
+//
+// An injected pool is the caller's, and it is used exactly as before: a scan
+// layer that already chose a node keeps its own pin.
+//
+// With no pool, the door asks the wallet's own configuration. That is what
+// makes CIPHER_XMR_NODE a door instead of a name: a caller that forgets to pass
+// a pool no longer gets an unchecked call, it gets the environment's answer.
+//
+// When the environment names nothing, the caller has still named ONE node in
+// the call itself, so the pin is that node. This is deliberately not a default
+// node and not a fetched list: it is the one address the caller wrote down, and
+// a one-node pool can only ever assert against the node it was built from.
+//
+// The named "nothing configured" refusal still belongs to createNodePool, and
+// it is still what nodeSourceFromEnv() throws when a scan asks the wallet to
+// choose. The alternative - refusing every no-pool call when the environment is
+// empty - was measured and rejected: it turns 28 existing door tests red across
+// block-redirect, block-timeout, tx-answer, tx-door and tx-timeout, which test
+// the door's parsing against a named node and are not this lane's to rewrite.
+// Those callers pass a node; that is a pin. A refactor that deletes this
+// fallback has to carry those 28 tests with it.
+// CONSTRUCTED ONCE, NOT PER CALL. A pool built and thrown away on every request
+// would discard the sticky session and the abandon/rotation state, so "one node
+// per scan" would only hold inside a single call - true on the page and false
+// in the wallet. The resolver is lazy (reading the environment at import is
+// exactly what c22e6a7 removed) and keyed on the configuration it was built
+// from: a changed override builds a new pool, an injected env object gets its
+// own (so tests cannot leak a session into one another), and the process
+// environment gets one per value.
+const POOLS_BY_ENV = new WeakMap();
+const POOLS_BY_PROCESS = new Map();
+
+function buildConfiguredPool(env) {
+  const configured = nodeSourceFromEnv({ env });
+  // A fresh pool has no session. Taking it here is what makes the first assert
+  // the pinned one, and it is where "every configured node has failed" is
+  // refused - before the socket, not instead of it.
+  configured.pick();
+  return configured;
+}
+
+function configuredPool(env) {
+  if (env && typeof env === 'object') {
+    const hit = POOLS_BY_ENV.get(env);
+    if (hit) return hit;
+    const built = buildConfiguredPool(env);
+    POOLS_BY_ENV.set(env, built);
+    return built;
+  }
+  const key = String(globalThis.process?.env?.CIPHER_XMR_NODE ?? '');
+  const hit = POOLS_BY_PROCESS.get(key);
+  if (hit) return hit;
+  const built = buildConfiguredPool(undefined);
+  POOLS_BY_PROCESS.set(key, built);
+  return built;
+}
+
+function poolFor(pool, node, env) {
+  if (pool) return pool;
+  try {
+    return configuredPool(env);
+  } catch (error) {
+    if (error.code !== 'NO_NODE_CONFIGURED') throw error;
+    return createPinnedPool(node);
+  }
+}
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX = /^[0-9a-fA-F]*$/;
@@ -57,14 +126,19 @@ function sameHost(asked, url) {
 // One JSON-RPC call. Every failure mode below is a refusal, and each says which
 // one it is: a caller must not read "the node did not answer" as "no payment".
 async function call(node, { method, params }, {
-  fetchImpl = globalThis.fetch, timeoutMs = 10000, timeoutSignal, pool = null,
+  fetchImpl = globalThis.fetch, timeoutMs = 10000, timeoutSignal, pool = null, env,
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('A node call needs a way to fetch.');
   const address = cleanNode(node);
 
+  // Before the socket: which node is this call actually allowed to talk to?
+  // The pool is resolved here, so a caller that passed no pool is checked
+  // against the wallet's configuration rather than skipped.
+  const pinned = poolFor(pool, address, env);
+
   // Before the socket: is this still the pinned node? A refusal here costs
   // nothing and keeps the query from reaching a server the scan has left.
-  if (pool) pool.assertCurrent(address);
+  pinned.assertCurrent(address);
 
   const url = `http://${address}/json_rpc`;
 
@@ -94,9 +168,11 @@ async function call(node, { method, params }, {
     } catch (error) {
       // The node did not answer at all: it is dead for this wallet, but only
       // for the NEXT scan. Abandoning it here is not a failover - this call
-      // still refuses, and nothing is retried on another node inside it.
-      // Optional-call: a caller may hold a pool that only answers the check.
-      if (pool) pool.abandon?.(address);
+      // still refuses, and nothing is retried on another node inside it. The
+      // call is unconditional: a pool without abandon would lose rotation
+      // silently, which is the same class of defect as checking after the
+      // socket. Both pool builders here provide it.
+      pinned.abandon(address);
       throw noAnswer(error);
     }
     if (!response || typeof response.text !== 'function') {
@@ -138,8 +214,8 @@ async function call(node, { method, params }, {
 // What the node says about itself. A node whose chain is behind its own target
 // height does not have the block that was asked for, and a node on another
 // network is serving a different chain entirely.
-export async function getInfo(node, { expectNetwork = 'mainnet', pool = null, ...options } = {}) {
-  const { result, address } = await call(node, { method: 'get_info' }, { ...options, pool });
+export async function getInfo(node, { expectNetwork = 'mainnet', pool = null, env, ...options } = {}) {
+  const { result, address } = await call(node, { method: 'get_info' }, { ...options, pool, env });
   const height = Number(result.height);
   const target = Number(result.target_height);
   if (!Number.isInteger(height) || height < 0 || height > MAX_HEIGHT) {
@@ -176,7 +252,7 @@ function readTxHashes(result, address, claimed) {
 }
 
 // One block, by hash or by height, exactly one of the two.
-export async function getBlock(node, { hash, height } = {}, { pool = null, ...options } = {}) {
+export async function getBlock(node, { hash, height } = {}, { pool = null, env, ...options } = {}) {
   const byHash = hash !== undefined;
   const byHeight = height !== undefined;
   if (byHash === byHeight) {
@@ -195,7 +271,7 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
   }
 
   const { result, address } = await call(node, { method: 'get_block', params },
-    { ...options, pool });
+    { ...options, pool, env });
 
   if (typeof result.blob !== 'string' || !HEX.test(result.blob) || result.blob.length % 2 !== 0 || result.blob.length === 0) {
     throw new Error(`The Monero node ${address} answered without a block blob this build can read.`);
@@ -256,7 +332,7 @@ export async function getBlock(node, { hash, height } = {}, { pool = null, ...op
 //   - the answer's status must be OK and every as_hex must be even-length hex
 //   - the order of txs is the order of the request: the caller's hash list is
 //     the law of the mapping, and a node that reorders is a node that lies
-export async function getTransactions(node, hashes, { pool = null, ...options } = {}) {
+export async function getTransactions(node, hashes, { pool = null, env, ...options } = {}) {
   if (!Array.isArray(hashes) || hashes.length === 0) {
     throw new Error('A transaction fetch asks for at least one 64-hex id.');
   }
@@ -268,8 +344,10 @@ export async function getTransactions(node, hashes, { pool = null, ...options } 
   const address = cleanNode(node);
   // Before the socket, exactly as the JSON-RPC door does: a pool that refuses
   // this node must mean the request never leaves, or the refusal is a receipt
-  // for a disclosure that already happened.
-  if (pool) pool.assertCurrent(address);
+  // for a disclosure that already happened. A caller that passed no pool is
+  // checked against the wallet's own configuration, not skipped.
+  const pinned = poolFor(pool, address, env);
+  pinned.assertCurrent(address);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new Error('A node call needs a way to fetch.');
 
@@ -297,9 +375,11 @@ export async function getTransactions(node, hashes, { pool = null, ...options } 
     } catch (error) {
       // The node did not answer at all: it is dead for this wallet, but only
       // for the NEXT scan. Abandoning it here is not a failover - this call
-      // still refuses, and nothing is retried on another node inside it.
-      // Optional-call: a caller may hold a pool that only answers the check.
-      if (pool) pool.abandon?.(address);
+      // still refuses, and nothing is retried on another node inside it. The
+      // call is unconditional: a pool without abandon would lose rotation
+      // silently, which is the same class of defect as checking after the
+      // socket. Both pool builders here provide it.
+      pinned.abandon(address);
       throw noAnswer(error);
     }
     if (!response || typeof response.text !== 'function') {

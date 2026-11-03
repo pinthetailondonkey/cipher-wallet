@@ -223,6 +223,7 @@ test('a node still syncing is a failed read, never a chain that is missing block
 test('the pinned node is checked BEFORE the request, so a refusal never discloses it', async () => {
   const log = [];
   const pool = {
+    abandon: () => {},
     assertCurrent: () => {
       log.push('assert');
       throw new Error('A scan runs against one Monero node. Refusing to stitch results from two.');

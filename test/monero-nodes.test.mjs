@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OVERRIDE_ENV, PUBLIC_NODES, createNodePool } from '../src/monero/nodes.js';
+import { OVERRIDE_ENV, PUBLIC_NODES, createNodePool, createPinnedPool } from '../src/monero/nodes.js';
 
 // A v3 onion address shape: fifty-six base32 characters. The wallet reaches
 // nodes over Tor, so this is the only kind of address the door accepts without
@@ -114,4 +114,36 @@ test('a port outside 1 to 65535 is not a port', () => {
     assert.throws(() => createNodePool({ override: address, allowClearnet: true }), /host:port, port 1 to 65535/, address);
   }
   assert.equal(createNodePool({ nodes: [`${ONION}:65535`] }).pick(), `${ONION}:65535`);
+});
+
+// The doors' fallback when no pool is injected and the wallet itself has
+// nothing configured: the address the caller wrote into the call is the pin.
+// It is not a default node and not a fetched list, and it still refuses a
+// different address, so the one-node-per-scan rule stays a check instead of
+// becoming a branch that skips one.
+test('a caller-pinned pool holds exactly the address it was given', () => {
+  const pool = createPinnedPool('node.example:18081');
+  assert.deepEqual(pool.nodes, ['node.example:18081']);
+  assert.equal(pool.pick(), 'node.example:18081');
+  assert.equal(pool.assertCurrent('node.example:18081'), 'node.example:18081');
+  assert.throws(() => pool.assertCurrent('other.example:18081'), /one Monero node/);
+  console.log('[nodes] pinned pool: one address, others refused');
+});
+
+test('a caller-pinned pool says a dead node ends the scan, and names it', () => {
+  const pool = createPinnedPool('node.example:18081');
+  const node = pool.pick();
+  pool.abandon(node);
+  assert.equal(pool.exhausted, true);
+  assert.throws(() => pool.pick(), /No configured Monero node answered/);
+  assert.throws(() => pool.assertCurrent(node), /one Monero node/);
+  // and the sentence is a read failure, never the money verdict "no payment"
+  assert.throws(() => pool.pick(),
+    (error) => /failed read/.test(error.message) && !/no payment/i.test(error.message));
+  console.log('[nodes] pinned pool: dead node is a failed read');
+});
+
+test('a pinned pool refuses to be built without an address', () => {
+  assert.throws(() => createPinnedPool(''), /needs a node address/);
+  assert.throws(() => createPinnedPool(undefined), /needs a node address/);
 });

@@ -87,7 +87,12 @@ export function createNodePool({ nodes = PUBLIC_NODES, override = '', allowClear
       })
       .filter(Boolean);
   if (list.length === 0) {
-    throw new Error('No Monero node is configured on this wallet, so the Monero rail cannot read the chain. Bitcoin is unaffected.');
+    const none = new Error('No Monero node is configured on this wallet, so the Monero rail cannot read the chain. Bitcoin is unaffected.');
+    // A stable name for the one refusal a caller may recover from by pinning
+    // the node it was already given. Matching on the sentence would break the
+    // first time someone edits the sentence.
+    none.code = 'NO_NODE_CONFIGURED';
+    throw none;
   }
 
   let cursor = 0;
@@ -160,4 +165,38 @@ export function nodeOverride(env = globalThis.process?.env) {
 export function nodeSourceFromEnv({ env = globalThis.process?.env, nodes = PUBLIC_NODES,
   allowClearnet = false } = {}) {
   return createNodePool({ nodes, override: nodeOverride(env), allowClearnet });
+}
+
+// A pool of exactly one node that the CALLER pinned, for the doors' fallback
+// when no pool was injected and the wallet itself has nothing configured. The
+// address is the one the caller wrote into the call, so this invents no default
+// and fetches no list: it exists so the pinned-node rule is still a check
+// rather than a branch that skips one.
+export function createPinnedPool(address) {
+  const node = String(address ?? '').trim().toLowerCase().replace(/\.$/, '');
+  if (!node) throw new Error('A pinned pool needs a node address.');
+  let session = node;
+  return {
+    pick() {
+      if (!session) {
+        throw new Error('No configured Monero node answered. This is a failed read, not a finding about any payment.');
+      }
+      return session;
+    },
+    assertCurrent(candidate) {
+      if (!session || candidate !== session) {
+        throw new Error('A scan runs against one Monero node. Refusing to stitch results from two.');
+      }
+      return candidate;
+    },
+    abandon(candidate) {
+      if (candidate === session) session = null;
+    },
+    get exhausted() {
+      return session === null;
+    },
+    get nodes() {
+      return [node];
+    },
+  };
 }

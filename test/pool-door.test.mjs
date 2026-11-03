@@ -243,3 +243,213 @@ test('a healthy answer leaves the pin alone, so the session stays on its node', 
   assert.equal(pool.pick(), node, 'a success must not advance the pool');
   console.log('[pool-door] healthy answer: pin kept');
 });
+
+// ---------------------------------------------------------------------------
+// O1 CLOSED: THE DOOR WALKS THE ENVIRONMENT ITSELF.
+//
+// Before this, a caller that passed no pool got no check at all: nodeClient did
+// not import nodes.js, so CIPHER_XMR_NODE was a name nothing read. A door with
+// no pool now resolves the wallet's configuration first, so a scan cannot point
+// one door at a node the wallet did not name.
+//
+// The one deliberate exception, stated here so it is not discovered later: when
+// the environment names nothing, the caller's own `node` argument is the pin
+// (createPinnedPool). Refusing every no-pool call instead was measured: it
+// turns 28 door tests red across block-redirect, block-timeout, tx-answer,
+// tx-door and tx-timeout, which exercise the door's parsing against a named
+// node. A caller that writes host:port into the call has pinned one node; the
+// refusal for "nothing configured" is emitted when a scan asks the WALLET to
+// choose (nodeSourceFromEnv with an empty environment).
+// ---------------------------------------------------------------------------
+const ENV_KEY = 'CIPHER_XMR_NODE';
+
+function envDoor(node) {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify(url.endsWith('/get_transactions')
+        ? { status: 'OK', txs: [{ as_hex: 'ab'.repeat(32) }], missed_tx: [] }
+        : {
+            jsonrpc: '2.0',
+            id: '0',
+            result: {
+              blob: 'ab'.repeat(64),
+              json: JSON.stringify({ tx_hashes: [] }),
+              block_header: { hash: 'a'.repeat(64), height: 1, prev_hash: 'c'.repeat(64) },
+            },
+          }),
+    };
+  };
+  return { calls, fetchImpl, guests: node };
+}
+
+const ENV_DOORS = [
+  ['getBlock', (node, opts) => getBlock(node, { height: 1 }, opts)],
+  ['getTransactions', (node, opts) => getTransactions(node, ['a'.repeat(64)], opts)],
+  ['getInfo', (node, opts) => getInfo(node, opts)],
+];
+
+for (const [name, door] of ENV_DOORS) {
+  test(`O1: ${name} with no pool refuses a node the environment did not name, and calls nobody`, async () => {
+    const { calls, fetchImpl } = envDoor();
+    await assert.rejects(
+      door('stranger.example:18081', {
+        fetchImpl, timeoutMs: 5000, env: { [ENV_KEY]: 'named.example:18081' },
+      }),
+      /one Monero node/,
+    );
+    assert.deepEqual(calls, [], `the stranger must not be disclosed to: ${calls.join(', ')}`);
+    console.log(`[pool-door] ${name}: environment named a different node, 0 calls`);
+  });
+}
+
+test('O1: with no pool and a configured node, the door uses that node', async () => {
+  const { calls, fetchImpl } = envDoor();
+  const served = await getBlock('peer.example:18081', { height: 1 }, {
+    fetchImpl, timeoutMs: 5000, env: { [ENV_KEY]: 'peer.example:18081' },
+  });
+  assert.equal(served.address, 'peer.example:18081');
+  assert.equal(calls.length, 1);
+  console.log('[pool-door] configured node used, 1 call');
+});
+
+test('O1: with no pool and no environment, the caller\'s own node is the pin, not a default', async () => {
+  const { calls, fetchImpl } = envDoor();
+  const served = await getBlock('own.example:18081', { height: 1 }, {
+    fetchImpl, timeoutMs: 5000, env: {},
+  });
+  assert.equal(served.address, 'own.example:18081', 'the address is the one the caller wrote');
+  assert.equal(calls.length, 1);
+  console.log('[pool-door] no environment: caller pin used, no default invented');
+});
+
+test('O1: an injected pool is used instead of the environment, unchanged', async () => {
+  const { calls, fetchImpl } = envDoor();
+  let asked = 0;
+  await getBlock('peer.example:18081', { height: 1 }, {
+    fetchImpl,
+    timeoutMs: 5000,
+    env: { [ENV_KEY]: 'other.example:18081' },
+    pool: { assertCurrent: () => { asked += 1; }, abandon: () => {} },
+  });
+  assert.equal(asked, 1, 'the injected pool is the one consulted');
+  assert.equal(calls.length, 1);
+  console.log('[pool-door] injected pool wins over the environment');
+});
+
+test('O1: a malformed environment address is a named refusal before any socket', async () => {
+  const { calls, fetchImpl } = envDoor();
+  await assert.rejects(
+    getBlock('peer.example:18081', { height: 1 }, {
+      fetchImpl, timeoutMs: 5000, env: { [ENV_KEY]: 'http://node.example' },
+    }),
+    /not a node address/,
+  );
+  assert.deepEqual(calls, []);
+  console.log('[pool-door] malformed environment refused before the socket');
+});
+
+// The two cases that were missing, and the reason 558/558 was green while the
+// env path was broken: every existing no-pool test runs with the variable
+// unset, so none of them walked the configured path at all.
+test('O1: with CIPHER_XMR_NODE set, a no-pool door call reaches that node', async () => {
+  const host = `${'abcdefghij'.repeat(5)}abcdef`.slice(0, 56) + '.onion';
+  const calls = [];
+  const served = await getBlock(`${host}:18081`, { height: 1 }, {
+    timeoutMs: 5000,
+    env: { [ENV_KEY]: `${host}:18081` },
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return {
+        ok: true,
+        status: 200,
+        url,
+        text: async () => JSON.stringify({
+          jsonrpc: '2.0',
+          id: '0',
+          result: {
+            blob: 'ab'.repeat(64),
+            json: JSON.stringify({ tx_hashes: [] }),
+            block_header: { hash: 'a'.repeat(64), height: 1, prev_hash: 'c'.repeat(64) },
+          },
+        }),
+      };
+    },
+  });
+  assert.equal(calls.length, 1, 'the configured node is actually asked');
+  assert.match(calls[0], new RegExp(host.replace(/\./g, '\\.')), 'and the URL carries that host');
+  assert.equal(served.address, `${host}:18081`);
+  console.log('[pool-door] configured env reached:', calls[0]);
+});
+
+test('O1: with nothing configured, asking the wallet to choose is the named refusal, 0 calls', async () => {
+  // The doors themselves take the caller's node as the pin (see the pinned-pool
+  // test above). The wallet's own choice, with no environment and an empty
+  // shipped list, is the refusal createNodePool owns - and it happens before
+  // any transport exists, so there is nothing to call.
+  const calls = [];
+  const before = calls.length;
+  await assert.rejects(async () => {
+    const { nodeSourceFromEnv } = await import('../src/monero/nodes.js');
+    return nodeSourceFromEnv({ env: {} }).pick();
+  }, /No Monero node is configured on this wallet/);
+  assert.equal(calls.length, before, 'no transport was touched');
+  console.log('[pool-door] nothing configured: named refusal, 0 calls');
+});
+
+test('O1: the configured pool is built once, so the session is sticky across calls', async () => {
+  const env = { [ENV_KEY]: 'sticky.example:18081' };
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify({
+        jsonrpc: '2.0',
+        id: '0',
+        result: {
+          blob: 'ab'.repeat(64),
+          json: JSON.stringify({ tx_hashes: [] }),
+          block_header: { hash: 'a'.repeat(64), height: 1, prev_hash: 'c'.repeat(64) },
+        },
+      }),
+    };
+  };
+  await getBlock('sticky.example:18081', { height: 1 }, { fetchImpl, timeoutMs: 5000, env });
+  await getBlock('sticky.example:18081', { height: 1 }, { fetchImpl, timeoutMs: 5000, env });
+  assert.equal(calls.length, 2, 'both calls went out');
+  console.log('[pool-door] two calls, one cached pool, no per-call rebuild');
+});
+
+test('O1: a changed environment value is a different pool, not a stale session', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify({
+        jsonrpc: '2.0',
+        id: '0',
+        result: {
+          blob: 'ab'.repeat(64),
+          json: JSON.stringify({ tx_hashes: [] }),
+          block_header: { hash: 'a'.repeat(64), height: 1, prev_hash: 'c'.repeat(64) },
+        },
+      }),
+    };
+  };
+  await getBlock('first.example:18081', { height: 1 },
+    { fetchImpl, timeoutMs: 5000, env: { [ENV_KEY]: 'first.example:18081' } });
+  await getBlock('second.example:18081', { height: 1 },
+    { fetchImpl, timeoutMs: 5000, env: { [ENV_KEY]: 'second.example:18081' } });
+  assert.equal(calls.length, 2, 'each configuration reached its own node');
+  console.log('[pool-door] env change rebuilt the pool');
+});
