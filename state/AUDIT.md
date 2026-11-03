@@ -469,3 +469,18 @@ Final gate at c138f9a / working tree: 611 tests, 611 pass, 0 fail; build 31 modu
 
 Open after close, none blocking: PUBLIC_NODES empty (founder), no-pool rotation residual (design,
 stated in README), no multi-input type-1 witness, decodeAmount still an unbuilt sketch (F1).
+
+## 2026-11-03 — fba917b "fixtures: the type-1 polarity was inverted, and the hole is smaller" — **VERIFIED**
+
+Docs only; gate 611/611, build 31, lint 0e (re-measured).
+
+Corrects the sentence I flagged: `use_simple_rct = sources.size() > 1 || range_proof_type !=
+RangeProofBorromean` (`cryptonote_tx_utils.cpp:549`), so Full is chosen only for exactly ONE source
+under Borromean. The new text states the polarity correctly and draws the right conclusion: Full is
+single-input in practice, the `inputs + 1` serializer term is always 2 on chain, and only a
+hand-built tx could exercise `> 2`. That is stronger than what it replaces.
+
+The 185-type-1 sweep count is taken as reported, not re-run (a partial re-run is not evidence for a
+negative); the conclusion does not depend on it, because the upstream branch makes a multi-input
+Full impossible for a wallet-built transaction. The distinguishing term is still unwitnessed, and
+the text now says exactly that rather than implying a chain sample exists.
