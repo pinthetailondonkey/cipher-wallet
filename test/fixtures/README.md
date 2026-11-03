@@ -385,10 +385,20 @@ block is exactly `ringSize + 2` keys and was proved on an earlier fixture. For
 type 1 it does cost something: the Full matrix is `inputs + 1` columns, and with
 one input that term is only ever tested as 2. A two-input type 1 would settle it
 and has not been found - sweeps of 1180000-1340000 and 1390000-1700000 at a
-500-block stride returned none. The shape is real (cryptonote_tx_utils.cpp:549
-sets `use_simple_rct` false only for a single source, so Full is emitted), it is
-just rare and never multi-input in the ranges swept. Do not read this fixture as
-pinning the column term.
+500-block stride returned none.
+
+Then the source explains why, and it shrinks the hole: cryptonote_tx_utils.cpp:549
+is `use_simple_rct = sources.size() > 1 || range_proof_type != RangeProofBorromean`,
+so the non-simple (Full) version is chosen only for exactly ONE source under
+Borromean, and Simple is taken as soon as there is more than one. Full is in
+practice a single-input shape. Measured rather than assumed: two disjoint sweeps
+(1550000-1600000 and 1240000-1290000, stride 300/200) covered 185 type-1
+transactions and found **zero** multi-input.
+
+So the `inputs + 1` term is real in the serializer but is always 2 on chain, and
+this fixture is representative of every Full transaction there is. What remains
+unwitnessed is only the `> 2` case, which would need a hand-built transaction,
+not a chain search. Do not read this fixture as pinning anything beyond that.
 
 The type numbering is the `rctTypes.h` enum at the pinned commit, where 3 is
 Bulletproof and 6 is BulletproofPlus, so 4 and 5 are Bulletproof2 and CLSAG and
