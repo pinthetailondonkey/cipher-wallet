@@ -358,10 +358,10 @@ for the pre-commit hook, so remove the space before checking.
 
 | type | name | height | hash-list index | bytes | sha256 |
 |---|---|---|---|---|---|
-| 1 | RCTTypeFull | 1600000 | 0 | 13192 | `276ed43ff18d5e420e2561587fd4d871 b43c317d59b713dfa944e06a0cf6eddd` |
-| 2 | RCTTypeSimple | 1500000 | 0 | 13524 | `6441afed6cd0d43e09aacc06d0dc5905 a4e3d995d60d070e1b2d7e080776b70b` |
-| 4 | RCTTypeBulletproof2 | 1800000 | 0 | 2629 | `1a9cfa979a9107893b4664b3b82a7467 9e2ab2ae84651ec706a11f6604c7c551` |
-| 5 | RCTTypeCLSAG | 2300000 | 0 | 1451 | `d784ee94d6d1d8dffaf8a53571eff3a9 c14ed8f0290699131931a77506886827` |
+| 1 | RCTTypeFull | 1600000 | 0 | 13192 | `006e9a25cc2d639578e73666a599b606 8ae8b08543f4d121622ee7b85d2713b4` |
+| 2 | RCTTypeSimple | 1500000 | 0 | 13524 | `05c3697969ffa39556cf1fd2882d61c6 9cc2b38bfe7b28fcfc226b0018ab647c` |
+| 4 | RCTTypeBulletproof2 | 1800000 | 0 | 2629 | `3a205e1e5c068ccf0c8632061c3e578e 82cfa99b82795689cfb5919ac4b07bb2` |
+| 5 | RCTTypeCLSAG | 2300000 | 0 | 1451 | `e374e63ffc765ecf03760048770dfc4a c09d24c60ea150565ec8902bfbf36cf4` |
 
 Shape notes, because each is a trap rather than a detail:
 
@@ -377,6 +377,18 @@ Shape notes, because each is a trap rather than a detail:
 - **Types 4 and 5** are the compressed-ecdh types: eight bytes of truncated
   amount per output and **no mask**, which is derived rather than carried. Types
   1, 2 and 3 carry a 32-byte mask and a 32-byte amount.
+
+**Input counts, and one honest hole.** Types 2 and 4 here have two inputs each, so
+the per-input and per-output terms are both exercised on those. The type 1 and
+type 5 samples have ONE input each. For type 5 that costs nothing, its CLSAG
+block is exactly `ringSize + 2` keys and was proved on an earlier fixture. For
+type 1 it does cost something: the Full matrix is `inputs + 1` columns, and with
+one input that term is only ever tested as 2. A two-input type 1 would settle it
+and has not been found - sweeps of 1180000-1340000 and 1390000-1700000 at a
+500-block stride returned none. The shape is real (cryptonote_tx_utils.cpp:549
+sets `use_simple_rct` false only for a single source, so Full is emitted), it is
+just rare and never multi-input in the ranges swept. Do not read this fixture as
+pinning the column term.
 
 The type numbering is the `rctTypes.h` enum at the pinned commit, where 3 is
 Bulletproof and 6 is BulletproofPlus, so 4 and 5 are Bulletproof2 and CLSAG and
