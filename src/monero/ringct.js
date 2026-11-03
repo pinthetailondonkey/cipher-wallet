@@ -14,16 +14,28 @@
 //   - the index is Monero's varint (LEB128, high bit means "another byte
 //     follows"), not Bitcoin's CompactSize. They agree below 0x80 and disagree
 //     forever after, which is exactly the range a real wallet reaches.
-//   - the modern encoding is 8+8 bytes, not the 32+32 the original RingCT used.
+//   - the modern encoding writes EIGHT bytes of amount and no mask at all; the
+//     mask is derived, not carried. The pre-Bulletproof2 encoding wrote a
+//     thirty-two byte mask and a thirty-two byte amount.
 //
-// HONEST LIMIT, and it is not decorative: everything below is pinned to
+// HONEST LIMIT, and it is not decorative. Everything below is pinned to
 // keccak-256's published vectors and to the LEB128 encoding, and to nothing
 // else. There is no real Monero transaction in this repo to check the formula
 // against end to end, so a round trip here proves the arithmetic is consistent
-// with itself, not that it matches the chain. Until a real transaction is
-// decoded and the amount matches one the owner knows, this file must not gate a
-// payment: no screen, no receipt and no watcher may call a Monero amount
-// confirmed on the strength of it.
+// with itself, not that it matches the chain.
+//
+// AND THE ROUND TRIP IS NOT ENOUGH, which is the finding this file now carries.
+// Measured against Monero's own serialization (pinned upstream, see
+// state/FINDING-F1-ringct-amount.md), the shape below is not a Monero shape:
+// decodeAmount demands SIXTEEN bytes of ecdh info where no RingCT type writes
+// sixteen (types 4/5/6 write eight and derive the mask; types 1/2/3 write
+// thirty-two of mask and thirty-two of amount), the pad below is wrong in three
+// ways (no sc_reduce32, no "amount" domain tag, mask read rather than derived),
+// and readTransaction does not even expose the bytes it wants. So this is a
+// sketch with no remaining caller, not a working decoder. Until it is rewritten
+// per type and fed from a block walk, it must not gate a payment: no screen, no
+// receipt and no watcher may call a Monero amount confirmed on the strength of
+// it.
 
 import { keccak_256 } from '@noble/hashes/sha3.js';
 

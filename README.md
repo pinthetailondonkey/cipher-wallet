@@ -22,10 +22,16 @@ recovery shards, and nothing here has been run against real money.
   transaction byte for byte and is wrong. The walk is written out in
   `test/fixtures/README.md` against the pinned `rctTypes.h`. Types 1, 2, 4 and
   5 still refuse by name.
-- RingCT amount decoding (ringct.js decodeAmount) is pinned to published
-  vectors and round-trips consistently, but no real amount has been decoded
-  and matched to one the owner knows. The module says so at the top and must
-  not gate a payment until it does.
+- **RingCT amount decoding (ringct.js decodeAmount) is not built.** It is
+  pinned to published vectors and round-trips consistently, and that is the
+  trap: the round trip is through the decoder's own inverse, so it proves the
+  arithmetic agrees with itself and nothing else. Measured against Monero's
+  own serialization, the decoder demands sixteen bytes of ecdh info where no
+  RingCT type writes sixteen (types 4/5/6 write eight, types 1/2/3 write
+  sixty-four), it pads with the wrong function, and the reader does not even
+  expose the bytes it wants. Correcting it spans `block.js` and `ringct.js` and
+  has to be written per type. `state/FINDING-F1-ringct-amount.md` has the
+  proofs and the pinned upstream lines.
 - Lane C (recognizing the wallet's own outputs against a scan) is gated on a
   countersigned work order. The rootVerify module is preparation only.
 
@@ -69,9 +75,10 @@ into one whole Monero wallet — its own spend and view keys and a standard
 address — with the derivation frozen and its first three addresses pinned by a
 test. The matching rule for spotting an output that is ours is built
 (`src/monero/scan.js`) and tested against locally built transactions. RingCT
-amounts now decrypt (`src/monero/ringct.js`), but they are pinned only to
-keccak's vectors and Monero's varint, not to a real transaction, so nothing may
-gate a payment on them yet.
+amounts do **not** yet decrypt: `src/monero/ringct.js` is a sketch on a
+sixteen-byte shape Monero never writes (proofs in
+`state/FINDING-F1-ringct-amount.md`), and its vectors pin keccak and the varint
+rather than the encoding, so nothing may gate a payment on it.
 
 **The block reader was withdrawn after review, and the withdrawal was the
 feature.** `src/monero/nodeClient.js` fetches a block from one pinned node and
