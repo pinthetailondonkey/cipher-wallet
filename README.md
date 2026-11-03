@@ -15,13 +15,14 @@ recovery shards, and nothing here has been run against real money.
 
 ### What is still open on the Monero read path
 
-- RingCT type 3 (RCTTypeBulletproof) is read and pinned on two real mainnet
-  transactions, one with a single input and one with two. The two-input pin is
-  the one that matters: this type is the simple layout, one MLSAG per input,
-  so a matrix of one row per input plus an aggregate fits a single-input
-  transaction byte for byte and is wrong. The walk is written out in
-  `test/fixtures/README.md` against the pinned `rctTypes.h`. Types 1, 2, 4 and
-  5 still refuse by name.
+- **Every RingCT type a real transaction can carry is now read**: 1 (Full), 2
+  (Simple), 3 (Bulletproof), 4 (Bulletproof2), 5 (CLSAG) and 6 (BulletproofPlus).
+  Each is pinned on real mainnet bytes with a needle and mutated controls, and
+  the per-type layout traps are written down in `test/fixtures/README.md` against
+  the pinned `rctTypes.h` — because they are traps: two of them cost a wrong
+  reader here already (a matrix read as one row per input, which only disagrees
+  on multi-input transactions, and a pseudoOuts array in a section upstream never
+  writes it to).
 - **RingCT amount decoding (ringct.js decodeAmount) is not built.** It is
   pinned to published vectors and round-trips consistently, and that is the
   trap: the round trip is through the decoder's own inverse, so it proves the
@@ -104,9 +105,9 @@ must equal the root the block carries. A block whose bytes and list disagree is
 refused by name. A walk that leaves a byte over is a framing lie and refused.
 The live path runs that whole chain over Tor against a real node.
 
-What is still not built: RingCT types 1, 2, 4 and 5 (type 3 is read), the scan
-wired to a block walk, and anything that spends or broadcasts. Nothing on the
-Monero side has been funded or touched mainnet.
+What is still not built: the scan wired to a block walk, and anything that
+spends or broadcasts. Nothing on the Monero side has been funded or touched
+mainnet.
 
 The transport for reading blocks is ruled: a shipped list of public nodes in
 `src/monero/nodes.js`, with a private node overriding the list when
