@@ -114,13 +114,20 @@ The transport for reading blocks is ruled: a shipped list of public nodes in
 `CIPHER_XMR_NODE` is set — one node per scan, sticky, and fail-closed, so a node
 that dies mid-scan refuses the scan rather than stitching two operators together.
 **The list still ships empty**, so a scan has no node to ask until the founder
-names addresses; capture scripts take `CIPHER_XMR_NODE` directly. The variable
-**is** now read at runtime, through one named door (`nodeOverride` /
-`nodeSourceFromEnv` in `nodes.js`), and the pinned-node check happens before the
-socket on every door rather than after the answer. What is still missing is a
-caller: `nodeClient.js` does not import `nodes.js`, and no `src/` code passes a
-pool, so a caller that omits one gets no pre-socket enforcement. The selection is
-built, tested and reachable; nothing opens the door yet.
+names addresses; capture scripts take `CIPHER_XMR_NODE` directly.
+
+The variable is read at runtime, and `nodeClient.js` walks that door itself: a
+caller that injects a pool keeps it unchanged, and a caller that injects none is
+resolved against the environment and falls back to the node it named. The
+pinned-node check happens before the socket on every door, never after the
+answer. With no override and no list, the refusal is named at the wallet boundary
+rather than arriving as a socket error.
+
+What that leaves open, and it is a real gap: `PUBLIC_NODES` still ships empty, so
+until the founder names addresses every scan needs `CIPHER_XMR_NODE` set or a node
+passed by hand. And a no-pool caller has no scan boundary, so it rotates after an
+abandon where a pool-holding caller would refuse; `state/AUDIT.md` records that as
+a risk.
 
 ## The vault is two layers
 
