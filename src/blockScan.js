@@ -49,6 +49,7 @@
 import { matchesFilter } from './filters.js';
 import { verifyBlockBody } from './merkle.js';
 import { blockHash as hashOfBlock, walkBack, walkHeadersForward } from './chain.js';
+import { verifiedFilter } from './peers.js';
 
 function sameBytes(a, b) {
   if (a.length !== b.length) return false;
@@ -75,8 +76,24 @@ function isCoinbaseInput(input) {
 //                spent us, and every input in the walk resolved: a lying filter.
 //   unresolved — input spends whose prevout is outside the walked range.
 //   scanned    — how many blocks were walked.
-export async function scanBack({ fetchFilter, fetchBlock, peer, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [] } = {}) {
-  if (typeof fetchFilter !== 'function') throw new Error('A scan needs a way to fetch a filter.');
+//
+// A single peer is not a witness. When `pool` and `client` are given, every
+// block's filter comes from peers.verifiedFilter: two independent peers must
+// agree on it AND it is rebuilt from the block's own bytes before it is used
+// here, so one lying peer cannot decide what is reported. Without a pool the
+// scan behaves exactly as before — one fetchFilter, one peer — which keeps the
+// older call sites and their tests unchanged; that path believes a lone peer by
+// design, and the pool is how a caller stops doing so.
+//
+// `client` has the peerClient.js shape: fetchFilter(peer, hash, opts) and
+// fetchBlock(peer, hash). It is only consulted when a pool is given.
+export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, client = null, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [] } = {}) {
+  if (pool && (!client || typeof client.fetchFilter !== 'function' || typeof client.fetchBlock !== 'function')) {
+    // Say so rather than quietly falling back to the lone `fetchFilter`: a
+    // caller who asked for a quorum must not get one peer's word.
+    throw new Error('A pooled scan needs a client with fetchFilter and fetchBlock, so the peers can be asked and the filter checked.');
+  }
+  if (!pool && typeof fetchFilter !== 'function') throw new Error('A scan needs a way to fetch a filter.');
   const wanted = (Array.isArray(scripts) ? scripts : []).filter((script) => script instanceof Uint8Array && script.length > 0);
   if (wanted.length === 0) throw new Error('A scan with no scripts would learn nothing, and would still tell a peer we asked.');
 
@@ -93,7 +110,25 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, tipHash, tipHeig
   // which "this block spends our coin" can be answered from blocks already read.
   for (let i = blocks.length - 1; i >= 0; i -= 1) {
     const { hash, height, body } = blocks[i];
-    const { filter } = await fetchFilter(peer, hash, { startHeight: height });
+    // Pooled: the filter is the one two peers agreed on and the block confirms.
+    // No pool: exactly the old single-peer question.
+    //
+    // Verification rebuilds the filter from the block, which needs the scripts
+    // this block's inputs spend. Every spend into an earlier walked block was
+    // indexed above (forwards is the only order that makes that knowable), so
+    // it is handed over. A spend of older money outside the walk cannot be
+    // rebuilt and is a refusal, not a false `false` — same honesty as `unresolved`.
+    const prevScripts = [];
+    for (const tx of body.transactions) {
+      for (const input of tx.inputs) {
+        if (isCoinbaseInput(input)) continue;
+        const output = outputsSeen.get(input.txid)?.[input.vout];
+        if (output) prevScripts.push(output.script);
+      }
+    }
+    const { filter } = pool
+      ? await verifiedFilter(pool, client, hash, { startHeight: height, prevScripts })
+      : await fetchFilter(peer, hash, { startHeight: height });
     const mentioned = wanted.filter((script) => matchesFilter(filter, hash, script));
 
     let paidHere = 0;
