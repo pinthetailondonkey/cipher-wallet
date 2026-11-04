@@ -1144,3 +1144,33 @@ warnings).
 - `fetchTx` answers are trusted only through the filter rebuild: a wrong script is
   a mismatch, which is a refusal, never a believed value.
 - `PUBLIC_NODES` still ships empty; header-first is still not the default.
+
+## 2026-11-04 — the shipped node list gains its first, live-verified row (lane A, coordinator)
+
+Base: 31b922e. Commit 7bf7132. `PUBLIC_NODES` had shipped empty since it was
+written, so with no `CIPHER_XMR_NODE` and no hand-passed node a scan refused. The
+rule was right (no invented addresses) but it left the rail unusable by default.
+
+EVIDENCE, measured live over clearnet 2026-11-04:
+- `get_info` on `xmr-node.cakewallet.com:18081` -> height 3798932.
+- `scripts/scan-live.mjs --height 3798930` -> block ad1cd8d1…, **59 transactions
+  read**, owned 0, 11.2 s. A real block went through the whole proven pipeline.
+- The wallet itself, `createWallet({ env: {} })` with no node and no override,
+  `monero.scan({ height })` -> chose the shipped row, block 00b9e1e1…, 50 tx read.
+
+FIX: one row `{ address: 'xmr-node.cakewallet.com:18081', allowClearnet: true }`,
+carrying its own clearnet allowance on the row as the rule requires. `resolveNode`
+now consults `nodeSourceFromEnv` (override first, then the list) and caches the
+pool so the choice is sticky. `nodeClient.poolFor` keeps enforcing the override
+when one is set, and otherwise pins the node the caller named, so the shipped list
+is chosen in exactly one place.
+
+TESTS: updated the four assertions that pinned emptiness to assert the row, and
+kept a truly-empty-list refusal test. New entry tests prove the wallet reaches the
+shipped row with zero configuration and that an override still wins.
+
+Gate at HEAD: 733/733 tests, build 36 modules, lint 0 errors (15 warnings).
+
+Residuals: the row is a stranger's server reached over clearnet (the row says so);
+one node means no rotation until a second is named; `monero.scan` findings are
+still returned, not persisted.
