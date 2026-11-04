@@ -31,15 +31,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { hex } from '@scure/base';
 
-import { parseBlock, readTransaction } from '../src/monero/block.js';
+import { parseBlock, readTransaction, transactionIdOf } from '../src/monero/block.js';
 import { walkBlockTxs } from '../src/monero/blockWalk.js';
 import { rootFromMnemonic } from '../src/root.js';
 import { moneroPocket } from '../src/monero/pocket.js';
 import {
-  keyDerivation, decodePoint, encodePoint, bytesToNumberLE, scReduce32,
+  keyDerivation, decodePoint, encodePoint, bytesToNumberLE, scReduce32, secretToPublic, derivePublicKey,
 } from '../src/monero/keys.js';
 import { transactionPublicKey } from '../src/monero/scan.js';
-import { derivationToScalar } from '../src/monero/ringct.js';
+import { derivationToScalar, encodeAmountForTest, commitmentMask, commitmentOf } from '../src/monero/ringct.js';
 import { ownOutputsInBlock } from '../src/monero/ownOutputs.js';
 
 const read = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
@@ -54,6 +54,7 @@ const BLOCK_ID = unspaced(BLOCK_FIXTURE.block.claimedId);
 
 const G = bytesOf('58666666666666666666666666666666 66666666666666666666666666666666');
 const G_POINT = decodePoint(G);
+const GROUP_ORDER = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
 const SEED = rootFromMnemonic('abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about');
 const POCKET = moneroPocket(SEED, 0);
 
@@ -148,4 +149,132 @@ test('a merge-mining extra is skipped by its own length and the pubkey behind it
 test('a merge-mining tag whose length overruns the extra is refused, not guessed', () => {
   const extra = bytesOf('03 40 00' + '00'.repeat(4));
   assert.throws(() => transactionPublicKey(extra), /merge-mining field is cut short/);
+});
+
+// ---- a synthetic block, to witness the SUCCESS branch ----
+//
+// Every real fixture pays a stranger, so no test could reach `row.value`: the
+// join's whole point was exercised only through the amount decoder's own round
+// trip. This builds a minimal but real-shaped block (a v1 coinbase miner tx and
+// one v2 RingCT type-5 tx) whose ecdh and commitment are encoded for a
+// derivation the test owns, so the join must return a NUMBER.
+//
+// Synthetic, and labelled so: it proves the wiring, not the chain.
+
+const varint = (n) => {
+  const out = [];
+  let x = BigInt(n);
+  for (;;) {
+    const b = Number(x & 0x7fn);
+    x >>= 7n;
+    if (x === 0n) { out.push(b); return Uint8Array.from(out); }
+    out.push(b | 0x80);
+  }
+};
+const cat = (...parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+const zeros = (n) => new Uint8Array(n);
+
+function syntheticType5Tx({ viewSecret, spend, txPub, value, index = 0 }) {
+  const derivation = keyDerivation(txPub, viewSecret);
+  const key = derivePublicKey(derivation, index, spend);
+  const extra = cat(Uint8Array.from([0x01]), txPub);
+  const ecdh = encodeAmountForTest({ derivation, index, value, rctType: 5 });
+  const mask = commitmentMask(derivationToScalar(derivation, index));
+  const commitment = commitmentOf({ amount: value, mask });
+  // One Bulletproof+ proof (6 field keys, L/R of 6, a/b/t) so the walk's own
+  // dimension checks pass, one CLSAG for a ring of 1, one pseudo-output.
+  const proof = cat(zeros(32 * 6), varint(6), zeros(32 * 6), varint(6), zeros(32 * 6), zeros(32 * 3));
+  const prunable = cat(varint(1), proof, zeros(32 * 3), zeros(32));
+  const bytes = cat(
+    varint(2), varint(0),                                   // version, unlock
+    varint(1), Uint8Array.from([0x02]), varint(0), varint(1), varint(0), zeros(32), // one key input
+    varint(1), varint(0), Uint8Array.from([0x02]), key,     // one key output
+    varint(extra.length), extra,
+    varint(5), varint(0), ecdh, commitment,                 // rct base
+    prunable,
+  );
+  return { bytes, mask, commitment, ecdh, key };
+}
+
+function syntheticBlock(txBytes) {
+  const minerKey = secretToPublic(scReduce32(zeros(32).fill(5)));
+  const miner = cat(
+    varint(1), varint(0), varint(1), Uint8Array.from([0xff]), varint(7), // v1 coinbase
+    varint(1), varint(0), Uint8Array.from([0x02]), minerKey, varint(0),
+  );
+  const txid = transactionIdOf(readTransaction(txBytes, 0, 'synthetic'));
+  const header = cat(varint(16), varint(16), varint(0), zeros(32), zeros(4));
+  return cat(header, miner, varint(1), Uint8Array.from(Buffer.from(txid, 'hex')));
+}
+
+test('THE SUCCESS BRANCH: a matched output with our derivation returns its amount through the join', () => {
+  const viewSecret = scReduce32(zeros(32).fill(9));
+  const spendSecret = scReduce32(zeros(32).fill(3));
+  const spend = secretToPublic(spendSecret);
+  const txPub = secretToPublic(scReduce32(zeros(32).fill(11)));
+  const value = 424242n;
+  const { bytes: txBytes } = syntheticType5Tx({ viewSecret, spend, txPub, value });
+  const blockBytes = syntheticBlock(txBytes);
+
+  const out = ownOutputsInBlock({ blockBytes, txBytesList: [txBytes], pockets: [{ index: 0, spend, viewSecret }] });
+  const rows = out.outputs.filter((r) => r.output === 0);
+  assert.equal(rows.length, 1, `exactly one owned output, got ${JSON.stringify(out.outputs, (_, v) => (typeof v === 'bigint' ? String(v) : v))}`);
+  assert.equal(rows[0].value, value, 'the encoded value comes back through the whole join');
+  assert.equal(rows[0].refused, undefined, 'and it is not a refusal');
+  assert.equal(typeof rows[0].mask, 'object', 'the mask rides back too');
+  console.log(`[lane-c] success branch: value ${value} returned through prove -> walk -> scan -> decode`);
+});
+
+test('the miner transaction is scanned, and its Null type is a named refusal, not a crash', () => {
+  const viewSecret = scReduce32(zeros(32).fill(9));
+  const spend = secretToPublic(scReduce32(zeros(32).fill(3)));
+  const txPub = secretToPublic(scReduce32(zeros(32).fill(11)));
+  const { bytes: txBytes } = syntheticType5Tx({ viewSecret, spend, txPub, value: 1n });
+  const blockBytes = syntheticBlock(txBytes);
+  // The synthetic miner's extra is empty, so it cannot even be addressed; that is
+  // a row. With a real miner extra it would be scanned and refused for Null.
+  const out = ownOutputsInBlock({ blockBytes, txBytesList: [txBytes], pockets: [{ index: 0, spend, viewSecret }] });
+  assert.equal(out.transactionsScanned, 2, 'miner plus one: both were attempted');
+  const minerRow = out.outputs.find((r) => r.coinbase === true);
+  assert.ok(minerRow, `the unaddressable miner is reported, got ${JSON.stringify(out.outputs, (_, v) => (typeof v === 'bigint' ? String(v) : v))}`);
+  assert.match(minerRow.refused, /scan|extra/);
+});
+
+test('two pockets sharing an index are both used, not resolved by lookup', () => {
+  const viewSecret = scReduce32(zeros(32).fill(9));
+  const spend = secretToPublic(scReduce32(zeros(32).fill(3)));
+  const txPub = secretToPublic(scReduce32(zeros(32).fill(11)));
+  const { bytes: txBytes } = syntheticType5Tx({ viewSecret, spend, txPub, value: 777n });
+  const blockBytes = syntheticBlock(txBytes);
+
+  // A second pocket with the SAME index whose derived key also lands on output 0
+  // but whose view secret (so derivation, so pad) is different. It must match,
+  // and its amount must REFUSE, while the first pocket's must decode. Under the
+  // old find-by-index resolution both rows would have used one derivation.
+  const otherView = scReduce32(zeros(32).fill(21));
+  const derA = keyDerivation(txPub, viewSecret);
+  const derB = keyDerivation(txPub, otherView);
+  const hsA = bytesToNumberLE(derivationToScalar(derA, 0));
+  const hsB = bytesToNumberLE(derivationToScalar(derB, 0));
+  // spendB = spendA + (hsA - hsB)*G, so B derives the same one-time key with a
+  // different derivation. Both match; only the encoder's derivation decodes.
+  const spendB = encodePoint(decodePoint(spend).add(G_POINT.multiplyUnsafe((hsA - hsB + GROUP_ORDER) % GROUP_ORDER)));
+
+  const out = ownOutputsInBlock({
+    blockBytes,
+    txBytesList: [txBytes],
+    pockets: [{ index: 7, spend, viewSecret }, { index: 7, spend: spendB, viewSecret: otherView }],
+    trustViewTags: false,
+  });
+  const owned = out.outputs.filter((r) => r.output === 0 && !r.refused);
+  const refused = out.outputs.filter((r) => r.refused && r.output === 0);
+  assert.equal(owned.length, 1, 'the pocket whose derivation is the encoder\'s decodes');
+  assert.equal(owned[0].value, 777n);
+  assert.equal(refused.length, 1, 'the same-index pocket with another view secret is scanned and refuses');
+  console.log('[lane-c] shared index: both pockets used, one decodes and one refuses');
 });

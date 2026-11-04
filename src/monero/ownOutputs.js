@@ -3,7 +3,7 @@
 // This is the join of four things that each existed and refused to trust the
 // next: parseBlock proves a block's id from its bytes, walkBlockTxs proves every
 // transaction id against the block's own hash list and rebuilds the tree root,
-// scanForPockets matches an output's one-time key to a pocket, and decodeAmount
+// scanTransaction matches an output's one-time key to a pocket, and decodeAmount
 // reads the value and refuses unless the decoded pair rebuilds the output's
 // commitment.
 //
@@ -21,13 +21,26 @@
 //     never dropped. Membership and value are separate claims: an output can be
 //     ours and unreadable, and showing nothing would make that look like a
 //     payment that is not there.
+//   - a transaction the scan cannot even address (no transaction public key, a
+//     junk one, an extra this build cannot read) is reported as its own row
+//     rather than throwing the whole block away. One unreadable transaction must
+//     not hide the other thirty-two.
+//
+// POCKETS ARE ITERATED, NOT LOOKED UP. A match carries a pocket index, and two
+// pockets can share an index, so resolving a match back through `find` by index
+// would decode with whichever pocket happened to be first and silently ignore the
+// other's view secret. Here each pocket is scanned with its own key and decoded
+// with its own derivation, so a shared index is never ambiguous. The same pocket
+// listed twice produces two identical rows; that is a caller's duplicate, not a
+// defect, and it is stated rather than deduplicated behind the caller's back.
 //
 // The honest remainder, unchanged by this module: a real amount that matches the
-// owner's still needs the owner's view secret, and these fixtures pay strangers.
+// owner's still needs the owner's view secret, and the pinned fixtures pay
+// strangers.
 
 import { parseBlock, readTransaction } from './block.js';
 import { walkBlockTxs } from './blockWalk.js';
-import { scanForPockets, bridgeWalkedTransaction, transactionPublicKey } from './scan.js';
+import { scanTransaction, bridgeWalkedTransaction, transactionPublicKey } from './scan.js';
 import { decodeAmount } from './ringct.js';
 import { keyDerivation } from './keys.js';
 
@@ -45,9 +58,9 @@ import { keyDerivation } from './keys.js';
 // correct and it is a filter, not a proof: a view tag is a function of the
 // derivation, so an output whose tag differs is not ours and skipping it is
 // sound. It is switchable because a wallet whose view secret is right but whose
-// tag arithmetic is not would otherwise see a silent empty, and because the
-// forged-pocket specs here change spend but not view, so the tag never matches.
-// With `trustViewTags: false` every output gets the full key comparison.
+// tag arithmetic is not would otherwise see a silent empty, and because a
+// forged-pocket spec changes spend but not view, so the tag never matches. With
+// `trustViewTags: false` every output gets the full key comparison.
 export function ownOutputsInBlock({
   blockBytes, txBytesList, pockets, expectHash, trustViewTags = true,
 } = {}) {
@@ -63,58 +76,82 @@ export function ownOutputsInBlock({
   const found = [];
   let scanned = 0;
 
-  // The miner transaction, whose bytes are inside the block rather than fetched.
-  // Scanned, and its amount is reported as unavailable rather than refused: a
-  // coinbase is RingCT type Null, which is a fact about the type, not a failure.
-  const seen = (transaction) => (trustViewTags
-    ? scanForPockets(pockets, transaction)
-    : scanEveryOutput(pockets, transaction));
-
-  for (const match of seen(bridgeWalkedTransaction(block.minerTx))) {
-    found.push({
-      pocket: match.pocket,
-      output: match.output,
-      txid: block.minerTxId,
-      coinbase: true,
-      refused: 'That output is in a miner transaction, whose RingCT type is Null: it carries no ecdh amount to read.',
-    });
-  }
-  scanned += 1;
-
-  // The block's other transactions, each already proved against the hash list.
-  for (let i = 0; i < txBytesList.length; i += 1) {
-    const tx = readTransaction(txBytesList[i], 0, `block transaction ${i}`);
+  // One transaction's worth of work. A transaction is read, then each pocket
+  // scans it with its own key, and a match decodes with the SAME pocket's
+  // derivation. `txid` is the id the walk proved.
+  const scanOne = (txid, bytesOrTx) => {
     scanned += 1;
-    const transaction = bridgeWalkedTransaction(tx);
-    const txPublicKey = transactionPublicKey(transaction.extra);
-    for (const match of seen(transaction)) {
-      const output = transaction.outputs[match.output];
-      const row = { pocket: match.pocket, output: match.output, txid: walk.ids[i], coinbase: false };
-      const pocket = pockets.find((p) => p.index === match.pocket);
-      const derivation = keyDerivation(txPublicKey, pocket.viewSecret);
-      try {
-        const { value, mask } = decodeAmount({
-          derivation, index: match.output, info: output.ecdh, rctType: transaction.rctType, commitment: output.commitment,
-        });
-        row.value = value;
-        row.mask = mask;
-      } catch (error) {
-        row.refused = error.message;
-      }
-      found.push(row);
+    let tx;
+    try {
+      tx = bytesOrTx.outputs ? bytesOrTx : readTransaction(bytesOrTx, 0, `transaction ${txid.slice(0, 16)}`);
+    } catch (error) {
+      found.push({ txid, coinbase: false, refused: `the transaction could not be read: ${error.message}` });
+      return;
     }
+    let transaction;
+    try {
+      transaction = bridgeWalkedTransaction(tx);
+    } catch (error) {
+      found.push({ txid, coinbase: false, refused: `the transaction could not be bridged to the scan: ${error.message}` });
+      return;
+    }
+    const coinbase = tx.coinbase === true;
+    let txPublicKey;
+    try {
+      // Read once per transaction, not once per pocket: it is a property of the
+      // transaction, and a junk key must be one row, not one row per pocket.
+      txPublicKey = transactionPublicKey(transaction.extra);
+      if (trustViewTags === false) {
+        transaction = { ...transaction, outputs: transaction.outputs.map((o) => ({ ...o, viewTag: undefined })) };
+      }
+    } catch (error) {
+      found.push({ txid, coinbase, refused: `the transaction could not be scanned: ${error.message}` });
+      return;
+    }
+
+    for (const pocket of pockets) {
+      let matches;
+      try {
+        matches = scanTransaction({ pocket, transactionPublicKey: txPublicKey, outputs: transaction.outputs });
+      } catch (error) {
+        // One bad output key in this transaction is a refusal for this pocket,
+        // and the other pockets in the same transaction must still run.
+        found.push({ pocket: pocket.index, txid, coinbase, refused: `the transaction could not be scanned for this pocket: ${error.message}` });
+        continue;
+      }
+      const derivation = keyDerivation(txPublicKey, pocket.viewSecret);
+      for (const index of matches) {
+        const row = { pocket: pocket.index, output: index, txid, coinbase };
+        const output = transaction.outputs[index];
+        if (output.ecdh === undefined || output.commitment === undefined) {
+          row.refused = 'the output carries no ecdh slice and commitment: it is in a RingCT type Null transaction, which is every coinbase, and Null carries no amount.';
+        } else {
+          try {
+            const { value, mask } = decodeAmount({
+              derivation, index, info: output.ecdh, rctType: transaction.rctType, commitment: output.commitment,
+            });
+            row.value = value;
+            row.mask = mask;
+          } catch (error) {
+            row.refused = error.message;
+          }
+        }
+        found.push(row);
+      }
+    }
+  };
+
+  // The miner transaction, whose bytes are inside the block rather than fetched,
+  // and which the walk proved through the block id and the tree root.
+  scanOne(block.minerTxId, block.minerTx);
+
+  // The block's other transactions, each already proved against the hash list by
+  // the walk above. Their bytes are read again here rather than cached, because
+  // the walk proved ids and those are what bind: a cached transaction object
+  // would be a second thing that could drift.
+  for (let i = 0; i < txBytesList.length; i += 1) {
+    scanOne(walk.ids[i], txBytesList[i]);
   }
 
   return { blockId: block.id, txTreeRoot: walk.txTreeRoot, transactionsScanned: scanned, outputs: found };
-}
-
-// The same match without the tag filter. scanTransaction decides on the tag
-// before the key comparison and there is no option to skip it, so this strips the
-// tags and lets the full comparison decide. Removing a filter cannot change a
-// true match, only cost work on outputs that were going to be skipped.
-function scanEveryOutput(pockets, transaction) {
-  return scanForPockets(pockets, {
-    ...transaction,
-    outputs: transaction.outputs.map((output) => ({ ...output, viewTag: undefined })),
-  });
 }
