@@ -68,3 +68,25 @@ test('deep enough confirmations walk the pocket to confirmed', async () => {
   assert.equal(deep[0].ok, true);
   assert.equal((await w.store.get('xmr', 0)).state, 'confirmed');
 });
+
+test('a pocket issued with a price refuses a short payment, and accepts one that covers it', async () => {
+  const w = createWallet({ seed: SEED, store: memoryKv(), env: {} });
+  await w.issueMonero({ amount: '2' });   // demand 2 xmr
+
+  // 1 xmr paid against a 2 xmr demand: refused, reported, pocket unmoved.
+  const short = await w.monero.recordFromScan({ outputs: [found({ pocket: 0, value: 1_000_000_000_000n })] }, {});
+  assert.equal(short[0].ok, false);
+  assert.match(short[0].error, /short of the order/);
+  assert.equal((await w.store.get('xmr', 0)).state, 'address_issued');
+
+  // 2 xmr covers it.
+  const enough = await w.monero.recordFromScan({ outputs: [found({ pocket: 0, value: 2_000_000_000_000n })] }, {});
+  assert.equal(enough[0].ok, true);
+  assert.equal((await w.store.get('xmr', 0)).state, 'seen');
+});
+
+test('the issued demand is stored on the pocket row', async () => {
+  const w = createWallet({ seed: SEED, store: memoryKv(), env: {} });
+  await w.issueMonero({ amount: '1.25' });
+  assert.equal((await w.store.get('xmr', 0)).demand, '1.25');
+});

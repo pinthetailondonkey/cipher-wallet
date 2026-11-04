@@ -134,6 +134,9 @@ export function createPocketStore(kv) {
       address: pocket.address,
       path: pocket.path,
       state: pocket.state,
+      // The price this pocket was issued to cover, if one was given. It is the
+      // demand a later report is checked against; null means "no price known".
+      demand: pocket.demand == null ? null : String(pocket.demand),
       txid: null,
       amount: null,
       confirmations: 0,

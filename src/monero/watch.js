@@ -10,10 +10,11 @@
 //
 // Two honest limits, stated rather than hidden:
 //
-//   DEMAND. The xmr rail tracks no per-pocket price yet, so the found value is
-//   passed as the demand too. That makes a found output record as seen/
-//   confirmed and never as short — a real short-payment check needs a demand
-//   recorded when the pocket is issued, which is a later lane.
+//   DEMAND. A pocket issued with a price (`issueMonero({ amount })`) stores it,
+//   and the report is checked against it like the Bitcoin rail, so a short xmr
+//   payment is refused. A pocket with no price has no demand to check, so the
+//   found value is passed as the demand too — which records seen/confirmed and
+//   never short. Pass `amount` at issue for a real short-payment check.
 //
 //   CONFIRMATIONS. A block does not carry its own height, so confirmations are
 //   only knowable when the caller gives both the block's height and the tip's.

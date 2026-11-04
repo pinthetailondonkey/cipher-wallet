@@ -132,7 +132,7 @@ export function createWallet({
     return receive.issue({ coin: key, ...(issueNetwork ? { network: issueNetwork } : {}), ...options });
   }
 
-  async function issueMonero({ walletNetwork = moneroNetwork, label = '' } = {}) {
+  async function issueMonero({ walletNetwork = moneroNetwork, label = '', amount = null } = {}) {
     const build = (stored) => {
       const current = stored || createHandle({ coin: 'xmr', label });
       const index = nextIndexFor(current, 'xmr');
@@ -141,7 +141,7 @@ export function createWallet({
       return {
         keys,
         handle: next,
-        pocket: { coin: 'xmr', index, address: keys.address, path: null, state: 'address_issued' },
+        pocket: { coin: 'xmr', index, address: keys.address, path: null, state: 'address_issued', demand: amount },
       };
     };
     // issueNext (when the store has it) keeps read-handle -> derive -> write in
@@ -349,7 +349,11 @@ export function createWallet({
       const results = [];
       for (const entry of reportsFromScan(out.outputs, { height, tipHeight })) {
         try {
-          await pockets.record('xmr', entry.pocket, entry.report, { amount: entry.report.amount });
+          // A pocket issued with a price is checked against it; without one the
+          // found value is the demand (see watch.js).
+          const row = await pockets.get('xmr', entry.pocket);
+          const demand = row?.demand ?? entry.report.amount;
+          await pockets.record('xmr', entry.pocket, entry.report, { amount: demand });
           results.push({ pocket: entry.pocket, output: entry.output, txid: entry.report.txid, ok: true });
         } catch (error) {
           results.push({ pocket: entry.pocket, output: entry.output, txid: entry.report.txid, ok: false, error: error?.message || String(error) });
