@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { hex } from '@scure/base';
 
 import { headerHash, blockHash, walkBack } from '../src/chain.js';
-import { meetsWork, targetFromBits, workRefusal, stampWork, EASY_BITS } from '../src/work.js';
+import { meetsWork, targetFromBits, workRefusal, stampWork, EASY_BITS, workForTarget, workOf, cumulativeWork } from '../src/work.js';
 import { reverseBytes, serializeTx, txid } from '../src/tx.js';
 
 // The mainnet genesis header, byte for byte. Real, mined, and its nBits
@@ -135,4 +135,18 @@ test('the walk refuses a self-consistent block whose header meets no target', as
     /does not meet its own work target|zero proof-of-work/,
   );
   witness('walk-level work', 'good walks', 'unbacked header refused by name');
+});
+
+// Work is a per-header quantity summed into a chain. These pin the accounting
+// primitives here next to the per-header ones they build on; the walk-level
+// floor lives in cumulative-work.test.mjs.
+test('workForTarget, workOf and cumulativeWork price work exactly and refuse bad input', () => {
+  assert.equal(workForTarget(0xffffn << 208n), (1n << 256n) / ((0xffffn << 208n) + 1n));
+  assert.throws(() => workForTarget(-1n), /non-negative bigint/);
+  assert.throws(() => workForTarget(5), /non-negative bigint/);
+  assert.equal(workOf(GENESIS_HEADER), workForTarget(targetFromBits(0x1d00ffff)));
+  const one = stampWork(new Uint8Array(80).fill(0x5a));
+  assert.equal(cumulativeWork([one, one]), workOf(one) * 2n);
+  assert.throws(() => cumulativeWork([]), /non-empty array/);
+  witness('accounting', 'exact', 'bad input refused');
 });

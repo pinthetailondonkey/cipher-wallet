@@ -101,6 +101,37 @@ export function assertMeetsWork(header) {
   return header;
 }
 
+// How much work a target is worth, as the expected number of hashes a miner
+// has to try: `2^256 / (target + 1)`. This is the standard expected-work form
+// used by Bitcoin and Ethereum (their `2^256/(target+1)`); a smaller target is
+// worth more work, and summing it over a chain prices the chain rather than one
+// header. A bigint, exact, never rounded.
+export function workForTarget(target) {
+  if (typeof target !== 'bigint' || target < 0n) {
+    throw new Error('A proof-of-work target is a non-negative bigint.');
+  }
+  return (1n << 256n) / (target + 1n);
+}
+
+// The work one header is worth: the work of the target its own nBits names.
+export function workOf(header) {
+  return workForTarget(targetFromBits(headerBits(header)));
+}
+
+// The work a whole chain is worth: the sum of every header's work. Order does
+// not matter, but the headers do, so an empty chain is refused by name rather
+// than quietly summing to zero. One header proves only that one header was
+// mined; a chain is priced by its total, which is what a peer cannot fake
+// cheaply by naming an easy target on every invented block.
+export function cumulativeWork(headers) {
+  if (!Array.isArray(headers) || headers.length === 0) {
+    throw new Error('Cumulative work is summed over a non-empty array of headers.');
+  }
+  let total = 0n;
+  for (const header of headers) total += workOf(header);
+  return total;
+}
+
 // The regtest-grade compact target used to stamp synthetic headers, which are
 // never mined. 0x207fffff is a real target (~2^255), so a stamped header keeps
 // its nBits meaningful rather than setting a magic flag.

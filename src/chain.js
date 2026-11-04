@@ -13,9 +13,33 @@
 import { hex } from '@scure/base';
 import { reverseBytes, sha256d } from './tx.js';
 import { verifyBlockBody } from './merkle.js';
-import { assertMeetsWork } from './work.js';
+import { assertMeetsWork, workOf } from './work.js';
 
 const HEADER_SIZE = 80;
+
+// The work floor a walk may be given, as a bigint, or 0n for no floor. Named
+// separately so both walks validate it the same way and the refusal reads the
+// same wherever it is raised.
+function checkedFloor(minWork) {
+  if (minWork === undefined || minWork === null) return 0n;
+  if (typeof minWork !== 'bigint' || minWork < 0n) {
+    throw new Error('A minimum work floor is a non-negative bigint.');
+  }
+  return minWork;
+}
+
+// Price a finished walk: refuse it if it is cheaper than the floor, then hang
+// the total on the returned array as a NON-ENUMERABLE `work` property. The
+// array is otherwise untouched, so every existing caller and every deepEqual
+// over the entries keeps working, and a caller that wants the price reads
+// `walked.work`.
+function pricedWalk(blocks, totalWork, floor) {
+  if (totalWork < floor) {
+    throw new Error(`the chain carries ${totalWork} work, below the floor ${floor}; a peer could have invented it cheaply.`);
+  }
+  Object.defineProperty(blocks, 'work', { value: totalWork, enumerable: false });
+  return blocks;
+}
 
 export function blockHeader(block) {
   if (!(block instanceof Uint8Array) || block.length < HEADER_SIZE) {
@@ -67,8 +91,16 @@ export function blockConnects(previousBlock, block) {
 // Heights are COUNTED from the anchor. A peer never supplies one, and a count
 // that would pass what four bytes hold is refused rather than wrapped — the
 // same bound the wire writers carry, checked before it can be written.
-export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, anchorHeight, tipHash = null, maxSteps = 2000, onHeader } = {}) {
+//
+// The walk is PRICED as it goes: every header's own work is added to a total,
+// and the finished array carries that total as a non-enumerable `work`. The
+// per-header check says a header was mined; only the total says whether the
+// chain as a whole was, because a peer chooses every nBits. `minWork` (a bigint
+// floor, optional) refuses a walk that finishes cheaper than the caller is
+// willing to believe, naming the total and the floor.
+export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, anchorHeight, tipHash = null, maxSteps = 2000, onHeader, minWork } = {}) {
   if (typeof fetchHeaders !== 'function') throw new Error('A header walk needs a way to fetch headers.');
+  const floor = checkedFloor(minWork);
   const anchor = String(anchorHash ?? '').trim().toLowerCase();
   // Two refusals, two sentences. Sharing one sentence made the pair
   // indistinguishable to a test — removing the hash check left the height check
@@ -83,6 +115,7 @@ export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, ancho
   if (tip && !/^[0-9a-f]{64}$/.test(tip)) throw new Error('A tip hash is 64 hex characters.');
 
   const walked = [];
+  let totalWork = 0n;
   let previous = anchor;
   let height = anchorHeight;
   for (let step = 0; step < maxSteps; step += 1) {
@@ -93,7 +126,7 @@ export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, ancho
     const headers = Array.isArray(answer?.headers) ? answer.headers : [];
     if (headers.length === 0) {
       if (tip) throw new Error(`The headers stopped short of ${tip}, so this walk did not reach the tip it was told to reach.`);
-      return walked;
+      return pricedWalk(walked, totalWork, floor);
     }
     for (const header of headers) {
       // Counted before it is used: a height past 0xffffffff would wrap, and a
@@ -112,11 +145,12 @@ export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, ancho
       // the header was actually mined, and without it a peer mines a private
       // chain for free.
       assertMeetsWork(header);
+      totalWork += workOf(header);
       height += 1;
       walked.push({ hash, height, header });
       await onHeader?.({ hash, height, header });
       previous = hash;
-      if (tip && hash === tip) return walked;
+      if (tip && hash === tip) return pricedWalk(walked, totalWork, floor);
     }
   }
   throw new Error(`The walk did not reach a stop after ${maxSteps} header batches.`);
@@ -134,8 +168,17 @@ export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, ancho
 // sits, and nothing in a block's bytes says a height. So the count this walk
 // makes is only ever as true as the claim it started from, and a walk that
 // would number a block below the first one refuses by naming itself.
-export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash = null, maxSteps = 1000, onBlock } = {}) {
+//
+// The walk is PRICED as it goes: every block's header work is added to a total,
+// and the returned array carries that total as a non-enumerable `work` property
+// (so `blocks` is still just the array of blocks to every existing caller). The
+// per-header check says one header was mined; the total is what a peer cannot
+// fake for free, because the peer chooses every nBits. `minWork` (a bigint
+// floor, optional; undefined or 0n means no floor) refuses a walk that finishes
+// cheaper than the caller is willing to believe.
+export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash = null, maxSteps = 1000, onBlock, minWork } = {}) {
   if (typeof fetchBlock !== 'function') throw new Error('A walk needs a way to fetch a block.');
+  const floor = checkedFloor(minWork);
   const tip = String(tipHash ?? '').trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(tip)) throw new Error('A tip hash is 64 hex characters.');
   const stop = stopHash ? String(stopHash).trim().toLowerCase() : null;
@@ -147,6 +190,7 @@ export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash 
   }
 
   const blocks = [];
+  let totalWork = 0n;
   let asked = tip;
   let previous = null;
   for (let step = 0; step < maxSteps; step += 1) {
@@ -180,11 +224,12 @@ export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash 
     // mined header unless it meets the target it names. This is the check a
     // never-mined private chain cannot satisfy for free.
     assertMeetsWork(blockHeader(bytes));
+    totalWork += workOf(blockHeader(bytes));
     blocks.push({ hash: actual, height: tipHeight - step, bytes, body });
     await onBlock?.({ hash: actual, bytes, body });
-    if (stop && actual === stop) return blocks;
+    if (stop && actual === stop) return pricedWalk(blocks, totalWork, floor);
     const parent = previousBlockHash(bytes);
-    if (parent === '0'.repeat(64)) return blocks;
+    if (parent === '0'.repeat(64)) return pricedWalk(blocks, totalWork, floor);
     previous = bytes;
     asked = parent;
   }

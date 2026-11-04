@@ -76,6 +76,10 @@ function isCoinbaseInput(input) {
 //                spent us, and every input in the walk resolved: a lying filter.
 //   unresolved — input spends whose prevout is outside the walked range.
 //   scanned    — how many blocks were walked.
+//   work       — the chain's total proof-of-work (a bigint), so a caller sees
+//                the price the walk charged, not just its length. `minWork`
+//                (a bigint floor, optional) is forwarded to the walk, which
+//                refuses a chain cheaper than it.
 //
 // A single peer is not a witness. When `pool` and `client` are given, every
 // block's filter comes from peers.verifiedFilter: two independent peers must
@@ -94,7 +98,7 @@ function isCoinbaseInput(input) {
 //
 // `client` has the peerClient.js shape: fetchFilter(peer, hash, opts) and
 // fetchBlock(peer, hash). It is only consulted when a pool is given.
-export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, client = null, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [] } = {}) {
+export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, client = null, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [], minWork } = {}) {
   if (pool && (!client || typeof client.fetchFilter !== 'function' || typeof client.fetchBlock !== 'function')) {
     // Say so rather than quietly falling back to the lone `fetchFilter`: a
     // caller who asked for a quorum must not get one peer's word.
@@ -123,6 +127,10 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
     tipHeight,
     stopHash,
     maxSteps,
+    // A chain is priced by its total work, not one header. Forwarded straight to
+    // the walk, where the floor is enforced; `work` on the walk's array comes
+    // back with it and is reported below.
+    minWork,
   });
 
   // Oldest first, though the walk hands them back newest first. A block's spends
@@ -187,7 +195,7 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
     }
   }
 
-  return { payments, spent, quiet, unresolved, scanned: blocks.length };
+  return { payments, spent, quiet, unresolved, scanned: blocks.length, work: blocks.work };
 }
 
 // Header-first: walk headers from an anchor, ask each block's filter, and fetch

@@ -294,8 +294,13 @@ Work is now checked too. `walkBack` and `walkHeadersForward` decode each
 header's nBits and require its double-sha256 to be at or below the target the
 header names; a header that does not is refused by name. So a never-mined
 private chain no longer walks for free — the peer must at least set a target its
-hash meets. What remains unverified is the chain's total work and fork choice:
-two chains of real work are both accepted, and nothing here picks between them.
+hash meets. And a chain is priced by its TOTAL work, not one header: each
+header's target is turned into expected hashes (`2^256/(target+1)`, the standard
+form) and summed, the total rides back on the walk's array as a non-enumerable
+`work`, and an optional `minWork` floor refuses a chain the peer could have
+invented cheaply by naming an easy target on every block. What remains
+unverified is fork choice: two chains that both clear the floor are both
+accepted, and nothing here picks the heavier one between them.
 
 Header-first walking is built, and it is not wired. `walkHeadersForward` counts
 forward from an anchor, checking every link; `scanHeaderFirst` fetches a body
