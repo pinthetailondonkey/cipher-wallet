@@ -52,8 +52,12 @@ function nodeStub({ blockHex = BLOCK_HEX, heightClaim = 3796965, hashClaim = BLO
     if (String(url).includes('get_transactions')) {
       // The REST door answers at the TOP level, not under jsonrpc result.
       const asked = body.txs_hashes ?? [];
-      const txs = dropTx ? [] : asked.map((h) => ({ hash: h, as_hex: txHex[txIds.indexOf(h)] }));
-      return { ok: true, status: 200, url, text: async () => JSON.stringify({ status: 'OK', txs, missed_tx: [] }) };
+      // A real node answers only what it carries: a hash it does not know goes to
+      // missed_tx. That is what makes a wrong CLAIM visible as a refused read.
+      const known = dropTx ? [] : asked.filter((h) => txIds.includes(h));
+      const txs = known.map((h) => ({ hash: h, as_hex: txHex[txIds.indexOf(h)] }));
+      const missed = asked.filter((h) => !txIds.includes(h));
+      return { ok: true, status: 200, url, text: async () => JSON.stringify({ status: 'OK', txs, missed_tx: missed }) };
     }
     throw new Error(`unexpected url ${url}`);
   };
@@ -114,6 +118,47 @@ test('a height scan whose node lies about the height is refused by the fetch', a
   await assert.rejects(
     scanBlockFromNode(NODE, { height: 3796966, pockets: [POCKET], fetchImpl: nodeStub({ heightClaim: 999999 }) }),
     /said it served height/,
+  );
+});
+
+test('a node whose CLAIMED hash list is shorter than the block body is refused', async () => {
+  // The claim and the block's own hash list are two independent things. The
+  // driver fetches using the claim, and the walk compares against the body, so a
+  // claim that is short by one must refuse rather than scan a partial block.
+  await assert.rejects(
+    scanBlockFromNode(NODE, {
+      hash: BLOCK_ID,
+      pockets: [POCKET],
+      fetchImpl: nodeStub({ txIds: TX_IDS.slice(0, 32), txHex: TX_HEX.slice(0, 32) }),
+    }),
+    /count and the list do not agree/,
+  );
+});
+
+test('a WRONG claimed hash is harmless if the node still serves the right bytes', () => {
+  // The claim decides only WHAT to fetch. The binding is the body: each fetched
+  // transaction's id is compared with the block's OWN hash list. So a node that
+  // mislabels one hash but hands over the correct bytes is scanned, and no
+  // disagreement is invented. This is a real property, not an accident.
+  const wrongIds = TX_IDS.map((h, i) => (i === 0 ? 'ab'.repeat(32) : h));
+  return scanBlockFromNode(NODE, {
+    hash: BLOCK_ID, pockets: [POCKET], fetchImpl: nodeStub({ txIds: wrongIds }),
+  }).then((out) => {
+    assert.equal(out.blockId, BLOCK_ID);
+    assert.equal(out.transactionsScanned, 34, 'all 34 still scanned from the correct bytes');
+  });
+});
+
+test('a node that HONOURS its wrong claim is refused at the fetch, by name', async () => {
+  // Same wrong hash, but this node really does not carry it: it answers with
+  // missed_tx, and a walk that would drop a transaction proves less than it
+  // claims. dropTx makes the node honest about not having it.
+  const wrongIds = TX_IDS.map((h, i) => (i === 0 ? 'ab'.repeat(32) : h));
+  await assert.rejects(
+    scanBlockFromNode(NODE, {
+      hash: BLOCK_ID, pockets: [POCKET], fetchImpl: nodeStub({ txIds: wrongIds, dropTx: true }),
+    }),
+    /count and the list|does not carry/,
   );
 });
 
