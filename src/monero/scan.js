@@ -19,6 +19,7 @@
 // Everything here runs on the device, per pocket, with that pocket's own view
 // key. There is no shared view key, which is what L3 bought.
 
+import { hex } from '@scure/base';
 import { keyDerivation, derivePublicKey, viewTag, isValidPublicKey, readVarint } from './keys.js';
 import { decodeAmount } from './ringct.js';
 
@@ -57,11 +58,18 @@ export function transactionPublicKey(extra) {
       at += count.length + 32 * Number(count.value);
       if (at > extra.length) throw new Error('The additional public keys are cut short.');
     } else if (tag === TX_EXTRA_TAG_MERGE_MINING) {
-      // 32-byte hash, then a varint depth, then a 32-byte merkle root.
-      at += 32;
-      if (at > extra.length) throw new Error('The merge-mining field is cut short.');
-      const depth = readVarint(extra, at);
-      at += depth.length + 32;
+      // A merge-mining tag is a STRING, not a struct: upstream stores it with
+      // `do_serialize(ar, field)` (tx_extra.h, member_do_serialize), which writes
+      // a varint byte length and then the bytes of an inner archive holding
+      // `depth` then `merkle_root`. So it is length-prefixed and this build does
+      // not need to know the inner shape to skip it — only its own length.
+      //
+      // It previously read a fixed 32 + varint + 32 here, which was wrong twice:
+      // root and depth are the other way round, and both are inside the prefixed
+      // string. The error surfaced on the miner transaction of block 3796965,
+      // whose extra tag 0x03 opens with length 0x21 (33) and then depth 0x00.
+      const size = readVarint(extra, at);
+      at += size.length + Number(size.value);
       if (at > extra.length) throw new Error('The merge-mining field is cut short.');
     } else {
       throw new Error('That transaction has an extra field this build cannot read.');
@@ -108,6 +116,36 @@ export function scanTransaction({ pocket, transactionPublicKey: txPublicKey, out
     if (sameBytes(expected, output.key)) matches.push(index);
   }
   return matches;
+}
+
+// The bridge: a WALKED transaction into the shape the scan takes.
+//
+// These are two different records on purpose and the difference is real.
+// readTransaction emits output keys as HEX STRINGS and view tags as numbers,
+// because that is what a monerod answer carries. scanForPockets requires
+// Uint8Array output keys, because it compares them byte for byte with a point it
+// derived itself. Feed the walk straight to the scan and it refuses with
+// "Output 0 has no one-time key" — an honest refusal, but not a useful one.
+//
+// The conversion lives here, at the boundary, and not inside either side:
+// readTransaction's hex is the wire's own shape, and the scan's byte requirement
+// is its own contract. Naming it means every future caller converts the same way
+// instead of inventing a different one. The ecdh slice and commitment are
+// already bytes and ride through unchanged; rctType is carried so the amount step
+// does not have to go back to the transaction.
+//
+// A walked transaction whose outputs already carry byte keys passes through, so
+// the bridge is idempotent rather than single-use.
+export function bridgeWalkedTransaction(tx) {
+  if (!tx || !Array.isArray(tx.outputs)) throw new Error('A bridge takes a walked transaction with outputs.');
+  return {
+    extra: tx.extra,
+    rctType: tx.rctType,
+    outputs: tx.outputs.map((output) => ({
+      ...output,
+      key: output.key instanceof Uint8Array ? output.key : hex.decode(output.key),
+    })),
+  };
 }
 
 // Scan one transaction for every pocket at once. Kept as a loop over pockets on
