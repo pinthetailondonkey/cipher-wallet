@@ -1244,3 +1244,20 @@ reported, and deep confirmations walking to confirmed.
 Gate at HEAD: 741/741 tests, build 37 modules, lint 0 errors (15 warnings).
 Residuals: no per-pocket xmr demand yet; a live block rarely pays the demo seed,
 so a recorded row is exercised by tests, not yet by a live hit.
+
+## 2026-11-04 — an xmr pocket can carry a price, so short is caught (lane A, coordinator)
+
+Base: 50bac65. Commit follows. The bridge's own doc named the limit: with no
+per-pocket demand the found value was the demand, so a short xmr payment could
+never be seen as short.
+
+FIX: `issueMonero({ amount })` stores the price on the row (`pocketStore` carries
+`demand`); `recordFromScan` checks the report against that demand when it is set,
+and falls back to the found value only when it is not. The check itself is
+`applyWatcherReport`, unchanged, so the xmr rail inherits the Bitcoin rail's
+short-payment refusal rather than a new one.
+
+TESTS: `test/monero-watch.test.mjs` gains a short-refusal/accepted pair and a row
+stores-its-demand check. Gate at HEAD: 743/743 tests, build 37, lint 0 errors.
+Residual: a live block rarely pays the demo seed, so a recorded row is still
+exercised by tests, not a live hit.
