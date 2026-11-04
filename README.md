@@ -104,9 +104,11 @@ live. Without it the hook exists and does nothing.
 `src/index.js` is the entry point that puts those together on one seed and one
 store (`createWallet`), and `package.json` names it, so `import 'cipher-wallet'`
 builds a wallet rather than a bag of modules. It is a seam, not a UI: it wires
-what exists, and names in its own header the parts that are still unjoined
-(no transport is constructed, and a scan finding is returned rather than
-persisted, because the watcher alone may move a payment).
+what exists, and names in its own header the parts that are still unjoined. When
+the caller passes a socket `connect`, the wallet builds its own peer transport
+(`wallet.peer`) and reaches a peer without hand-passed fetchers; without one it
+still takes them from the caller. A scan finding is returned rather than
+persisted, because the watcher alone may move a payment.
 
 ## Derivation (the format, not an implementation detail)
 
@@ -307,12 +309,14 @@ default path still uses exact `agreedTip`. What remains is that no caller is
 forced onto it, and the winner's height rides on the peer's claim like every
 other height here.
 
-Header-first walking is built, and it is not wired. `walkHeadersForward` counts
-forward from an anchor, checking every link; `scanHeaderFirst` fetches a body
-only when its filter matched — the BIP-157 shape, and what makes the filters save
-bandwidth. It has no caller because it needs a block to start from and this
-repository is not allowed to choose one: the anchor is a required argument with
-no default, and the founder names a block by hand or the walk does not run.
+Header-first walking is built, and it now has a door. `walkHeadersForward`
+counts forward from an anchor, checking every link; `scanHeaderFirst` fetches a
+body only when its filter matched — the BIP-157 shape, and what makes the filters
+save bandwidth. `wallet.scanHeadersFirst` reaches it when the wallet has a
+transport. It is still not the default, and it needs a block to start from: this
+repository is not allowed to choose an anchor, so the anchor is a required
+argument with no default and the founder names a block by hand or the walk does
+not run.
 
 What the saving costs is measured rather than described, in
 `test/header-scan.test.mjs`: the same block and the same script, run through both

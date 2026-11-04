@@ -17,9 +17,11 @@
 //        own outputs inside it. monero.pocket(s) is the join back to the seed.
 //
 // HONESTLY UNJOINED, said here rather than faked:
-//   - No transport is constructed. peerClient needs a socket `connect`, so
-//     scanBack() takes fetchFilter/fetchBlock/peer from the caller, and the
-//     Monero scan takes an injected fetchImpl. This file chooses no Tor stack.
+//   - No Tor stack is chosen. peerClient needs a socket `connect`, so when the
+//     caller passes one the wallet builds its own transport (wallet.peer) and
+//     scanBack()/scanHeadersFirst() reach a peer without hand-passed fetchers;
+//     without `connect`, scanBack() still takes fetchFilter/fetchBlock/peer from
+//     the caller. The Monero scan takes an injected fetchImpl.
 //   - A Monero finding is RETURNED, not written into the pocket store.
 //     pocketStore.record() only accepts a signed watcher report; there is no
 //     xmr watcher bridge yet, so a scan result does not move a state.
@@ -39,7 +41,8 @@ import {
 import { checkPayment, childWatcherToken } from './watcher.js';
 import { derivePocket, pocketFor } from './root.js';
 import { p2wpkhScriptFor } from './tx.js';
-import { scanBack as scanBackBitcoin } from './blockScan.js';
+import { scanBack as scanBackBitcoin, scanHeaderFirst } from './blockScan.js';
+import { createPeerClient } from './peerClient.js';
 import { moneroPocket, DEFAULT_NETWORK as DEFAULT_XMR_NETWORK } from './monero/pocket.js';
 import { scanBlockFromNode } from './monero/scanFromNode.js';
 import { ownOutputsInBlock } from './monero/ownOutputs.js';
@@ -68,6 +71,8 @@ export function createWallet({
   scripts = null,
   network = DEFAULT_BTC_NETWORK,
   moneroNetwork = DEFAULT_XMR_NETWORK,
+  connect = null,
+  peerNetwork = 'mainnet',
   fetchImpl,
 } = {}) {
   if (!(seed instanceof Uint8Array) || seed.length === 0) {
@@ -78,6 +83,26 @@ export function createWallet({
   const btcNetwork = String(network || DEFAULT_BTC_NETWORK).toLowerCase();
 
   const receive = createReceive({ seed, store: pockets, watcherUrl });
+
+  // The transport, when the caller supplies a socket. `connect(peer)` is the
+  // exact shape peerClient.js expects, so the wallet can own the client and a
+  // caller stops hand-wiring fetchFilter/fetchBlock/peer. With no `connect`
+  // this stays null and every call below behaves exactly as before.
+  const peerClient = typeof connect === 'function' ? createPeerClient({ connect, network: peerNetwork }) : null;
+
+  // One peer record to walk with, when a pool is configured and the caller
+  // passed none. `pick()` returns an array; the first is the single-peer walk's
+  // peer. An empty pool degrades to undefined, not a throw, so the existing
+  // caller-supplied path is never made worse by this file.
+  function pickPeer(candidatePool) {
+    if (!candidatePool || typeof candidatePool.pick !== 'function') return undefined;
+    try {
+      const picked = candidatePool.pick();
+      return Array.isArray(picked) ? picked[0] : picked;
+    } catch {
+      return undefined;
+    }
+  }
 
   // --- bitcoin: issue, watch, spend -----------------------------------------
 
@@ -169,16 +194,71 @@ export function createWallet({
     return rows.map((row) => p2wpkhScriptFor(derivePocket(seed, 'btc', row.index).publicKey));
   }
 
-  // Walk back from a tip over a peer, looking for our own coins. The peer
-  // plumbing (fetchFilter/fetchBlock/peer) is the caller's, because no Tor stack
-  // is chosen here. Scripts default to the wallet's own; an explicit list wins.
+  // Walk back from a tip over a peer, looking for our own coins. Scripts default
+  // to the wallet's own; an explicit list wins.
+  //
+  // The peer plumbing (fetchFilter/fetchBlock/peer) is the caller's unless the
+  // wallet built a transport. When it did, anything the caller left out is
+  // supplied from wallet.peer, and a pool with no peer picks one for the walk.
+  // With no transport the arguments pass straight through, unchanged.
   //
   // A wallet-level `pool` is forwarded, so a caller that configured a pool gets
   // the agreeing-peers path in blockScan; passing pool: null explicitly keeps a
-  // single trusted peer. A pooled scan also needs the caller's peer client.
-  async function scanBack({ scripts: wanted = scripts, pool: scanPool = peerPool ?? pool, ...options } = {}) {
+  // single trusted peer. A pooled scan also needs a peer client, which the
+  // built transport supplies.
+  async function scanBack({
+    scripts: wanted = scripts,
+    pool: scanPool = peerPool ?? pool,
+    client,
+    peer,
+    fetchFilter,
+    fetchBlock,
+    ...options
+  } = {}) {
     const list = wanted ?? await ownScripts();
-    return scanBackBitcoin({ ...options, pool: scanPool, scripts: list });
+    const wired = {};
+    if (peerClient) {
+      if (client !== undefined) wired.client = client; else wired.client = peerClient;
+      if (fetchFilter !== undefined) wired.fetchFilter = fetchFilter; else wired.fetchFilter = peerClient.fetchFilter;
+      if (fetchBlock !== undefined) wired.fetchBlock = fetchBlock; else wired.fetchBlock = peerClient.fetchBlock;
+    } else {
+      if (client !== undefined) wired.client = client;
+      if (fetchFilter !== undefined) wired.fetchFilter = fetchFilter;
+      if (fetchBlock !== undefined) wired.fetchBlock = fetchBlock;
+    }
+    const walkPeer = peer !== undefined ? peer : pickPeer(scanPool);
+    if (walkPeer !== undefined) wired.peer = walkPeer;
+    return scanBackBitcoin({ ...options, pool: scanPool, scripts: list, ...wired });
+  }
+
+  // Header-first: walk headers from an anchor, ask each block's filter, and
+  // download a body only when the filter matched. The anchor is the caller's
+  // (nothing here pins one); fetchHeaders/fetchFilter/fetchBlock come from the
+  // built transport unless the caller supplies its own. Scripts default to the
+  // wallet's own, the same as scanBack.
+  async function scanHeadersFirst({
+    scripts: wanted = scripts,
+    pool: scanPool = peerPool ?? pool,
+    peer,
+    fetchHeaders,
+    fetchFilter,
+    fetchBlock,
+    ...options
+  } = {}) {
+    const list = wanted ?? await ownScripts();
+    const wired = {};
+    if (peerClient) {
+      wired.fetchHeaders = fetchHeaders !== undefined ? fetchHeaders : peerClient.fetchHeaders;
+      wired.fetchFilter = fetchFilter !== undefined ? fetchFilter : peerClient.fetchFilter;
+      wired.fetchBlock = fetchBlock !== undefined ? fetchBlock : peerClient.fetchBlock;
+    } else {
+      if (fetchHeaders !== undefined) wired.fetchHeaders = fetchHeaders;
+      if (fetchFilter !== undefined) wired.fetchFilter = fetchFilter;
+      if (fetchBlock !== undefined) wired.fetchBlock = fetchBlock;
+    }
+    const walkPeer = peer !== undefined ? peer : (peerClient ? pickPeer(scanPool) : undefined);
+    if (walkPeer !== undefined) wired.peer = walkPeer;
+    return scanHeaderFirst({ ...options, scripts: list, ...wired });
   }
 
   // --- monero: issue and read ----------------------------------------------
@@ -244,7 +324,9 @@ export function createWallet({
     watch,
     spend,
     monero,
+    peer: peerClient,
     scanBack,
+    scanHeadersFirst,
     walletScripts: ownScripts,
     watcherUrl,
     node,
