@@ -1328,3 +1328,32 @@ NOTE on the gate: this commit adds a fixture full of public 64-hex output keys,
 so the pre-commit backstop fired (it flags any added 64-hex string). The lines
 were read, they are public bytes, and the commit used --no-verify; README now
 writes that escape down instead of leaving it folklore.
+
+## 2026-11-04 — an unsigned spend is built, and the wallet's own scanner judges it (lane A, coordinator)
+
+Base: a9494b6. Every piece of a Monero spend existed (section writers, pinned key
+operations, amount encoder beside its decoder) and nothing had ever joined them
+into a transaction.
+
+FIX: `src/monero/build.js` — `txPublicKeyFrom`, `extraWithTxPublicKey`,
+`outputDerivation` (8*(r*A), the same value the receiver reaches as 8*(a*R)),
+`buildOutput` (one-time key, view tag, ecdh entry, commitment), and `buildSpend`
+(prefix + base + type 6 prunable with a real pseudo-output commitment, the key
+image from the input's OWN one-time secret, and the balance scalars taux/mu).
+`writeType6Prunable` now accepts real pseudo-outputs; `monero.buildSpend` reaches
+it from the entry.
+
+EVIDENCE, and it is a closed loop rather than self-agreement: a built spend is
+parsed by this build's reader and then SCANNED by this build's scanner, which
+finds the recipient's output, decodes the exact amount, and rebuilds the
+commitment (refusing if it does not). Also asserted: the one-time secret matches
+the one-time key, the key image is of that pair and not of the pocket's base
+secret, the tx public key survives the extra, the real ring's offsets survive, a
+stranger finds nothing with tags on OR off, a rebuild is byte-identical, and the
+balance holds on real curve points with the reported taux. Eight source mutants
+run, all killed.
+
+LIMITS, in the module: the proofs are zero width-correct bytes (no CLSAG, no
+Bulletproof+), so a node would still refuse the transaction; nothing broadcasts.
+
+Gate at HEAD: 961/961 tests, build 40 modules, lint 0 errors (15 warnings).

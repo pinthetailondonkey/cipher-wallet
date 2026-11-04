@@ -212,6 +212,26 @@ oracle and measuring the trap rather than describing it. `/get_outs` is the door
 `monero.ringFor` reaches it from the wallet, choosing a node the way a scan does
 and rotating off a dead one.
 
+**An unsigned transaction can now be built from those parts, and the loop
+closes.** `src/monero/build.js` turns a ring, a recipient and an input's own
+one-time pair into bytes: the one-time output keys, their view tags, hidden
+amounts, commitments, the key image, and the balance. Nothing there is new
+cryptography, and the module says so; what is new is the join and the way it is
+judged. A built spend is parsed back by this build's own reader and then scanned
+by this build's own scanner, which must find the payment, decode the exact
+amount, and rebuild the commitment. A derivation, a view tag, an ecdh pad or a
+commitment that is one scalar wrong shows up as "found nothing" or "did not
+decode", on code the wallet already trusts on real chain bytes. A stranger's view
+secret finds nothing, and the balance is checked on real curve points
+(`sum(pseudoOut) - sum(outPk) - fee*H = taux*G`). Eight source mutants were run
+against the builder and all were killed.
+
+What a built spend still is not: **signed**. The Bulletproof+ vectors and the
+CLSAG scalars are zero bytes of the right width, so a node would refuse it. `taux`
+and `mu` are computed rather than guessed, because they are arithmetic, and the
+pseudo-output mask is derived from the transaction secret so a rebuild is
+byte-identical. `monero.buildSpend` reaches all of it from the wallet.
+
 The ring door's evidence had to be different, because a ring member is in no
 transaction. `scripts/pin-outs.mjs` captured one real answer and then proved it
 against the chain in the same run: for each output, the block at the named

@@ -389,6 +389,21 @@ export function readVarint(bytes, offset = 0) {
   throw new Error('That varint stops in the middle of a number.');
 }
 
+// Exported for the modules that assemble sections out of the pieces here: a
+// builder concatenating a prefix, a base and a prunable should not write its
+// own byte joiner, because a second joiner is a second place a length can be
+// wrong.
+export function concatBytes(arrays) {
+  const total = arrays.reduce((n, a) => n + a.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const a of arrays) {
+    out.set(a, at);
+    at += a.length;
+  }
+  return out;
+}
+
 function concat(arrays) {
   const total = arrays.reduce((n, a) => n + a.length, 0);
   const out = new Uint8Array(total);

@@ -393,3 +393,45 @@ test('monero.ringFor refuses a ring that does not hold our own output', async ()
   await assert.rejects(w.monero.ringFor({ indices, ours: 123456, fetchImpl }), /does not contain our own output/);
   await assert.rejects(w.monero.ringFor({ indices: [], fetchImpl }), /absolute indices/);
 });
+
+test('monero.buildSpend builds an unsigned spend that the wallet\'s own scan can read back', async () => {
+  const w = buildWallet({ env: {} });
+  const sender = w.monero.pocket(0);
+  const recipient = w.monero.pocket(1);
+  const xmr = 1_000_000_000_000n;
+
+  // A payment the sender already received, built through the same door, so the
+  // input it spends is real to this build's own scanner.
+  const priorSecret = (await import('../src/monero/keys.js')).hashToScalar(Uint8Array.from([7, 7, 7]));
+  const priorPublic = w.monero.txPublicKeyFrom(priorSecret);
+  const derivation = w.monero.outputDerivation(priorSecret, sender.view);
+  const owned = w.monero.buildOutput({ derivation, index: 0, spendPublic: sender.spend, value: 3n * xmr });
+  const keys = await import('../src/monero/keys.js');
+  const ownedSecret = keys.deriveSecretKey(derivation, 0, sender.spendSecret);
+  const spendSecret = keys.hashToScalar(Uint8Array.from([8, 8, 8]));
+
+  const built = w.monero.buildSpend({
+    input: { keyOffsets: [1n, 2n, 3n], outputKey: owned.key, outputSecret: ownedSecret, value: 3n * xmr, mask: owned.mask },
+    recipients: [
+      { spendPublic: recipient.spend, viewPublic: recipient.view, value: 1n * xmr },
+      { spendPublic: sender.spend, viewPublic: sender.view, value: 3n * xmr - 1n * xmr - 30_000_000n },
+    ],
+    fee: 30_000_000n,
+    txSecret: spendSecret,
+  });
+
+  assert.equal(built.bytes instanceof Uint8Array, true);
+  assert.equal(built.id.length, 64);
+  assert.equal(built.outputs.length, 2, 'the payment and the change');
+  assert.notDeepEqual(built.txPublicKey, priorPublic, 'a fresh transaction secret, not the one that paid the input');
+
+  // The recipient, through the wallet\'s own scan shape, finds it.
+  const { scanTransaction, bridgeWalkedTransaction, transactionPublicKey } = await import('../src/monero/scan.js');
+  const { readTransaction } = await import('../src/monero/block.js');
+  const tx = readTransaction(built.bytes, 0, 'entry built spend');
+  assert.deepEqual(scanTransaction({
+    pocket: recipient,
+    transactionPublicKey: transactionPublicKey(tx.extra),
+    outputs: bridgeWalkedTransaction(tx).outputs,
+  }), [0]);
+});

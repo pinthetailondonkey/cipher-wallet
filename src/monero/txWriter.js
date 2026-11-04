@@ -208,7 +208,7 @@ export function writeRctBase({
 // why Monero writes them with no count prefix. A caller that gets `ringSize`
 // from its own input's offsets cannot drift from what the reader expects.
 export function writeType6Prunable({
-  inputCount, outputCount, ringSize, proofCount = outputCount, lCount = 6, rCount = 6,
+  inputCount, outputCount, ringSize, proofCount = outputCount, lCount = 6, rCount = 6, pseudoOuts = [],
 } = {}) {
   const inputs = count(inputCount, 'input count');
   const outputs = count(outputCount, 'output count');
@@ -232,7 +232,16 @@ export function writeType6Prunable({
     parts.push(zeros(32));                        // c1
     parts.push(zeros(32));                        // D
   }
-  parts.push(zeros(32 * inputs));                 // the pseudo-out commitments
+  // The pseudo-output commitments, one per input. A caller that has them (the
+  // builder does, because a commitment is arithmetic) writes real ones; a
+  // caller that does not gets zeros rather than a shorter section, since the
+  // count comes from the input count either way.
+  if (pseudoOuts.length > 0 && pseudoOuts.length !== inputs) {
+    throw new Error(`That prunable section needs one pseudo-output per input: ${inputs} input(s), ${pseudoOuts.length} pseudo-output(s).`);
+  }
+  for (let i = 0; i < inputs; i += 1) {
+    parts.push(pseudoOuts.length === 0 ? zeros(32) : asBytes(pseudoOuts[i], `pseudo-output ${i}`, HASH_BYTES));
+  }
   return concat(parts);
 }
 

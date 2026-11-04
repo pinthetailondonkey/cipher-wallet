@@ -31,9 +31,10 @@
 //     is the only thing allowed to move a payment, and that separation is kept.
 //   - There is no Monero spend. The format can be WRITTEN now (`monero.tx`
 //     re-encodes a transaction's prefix, base and type 6 prunable) and a ring
-//     can be FETCHED and turned into offsets (`monero.ringFor`), but nothing
-//     here computes a key image from a fetched output, builds a commitment,
-//     signs a CLSAG, or broadcasts.
+//     can be FETCHED and turned into offsets (`monero.ringFor`) and an UNSIGNED
+//     transaction can be built (`monero.buildSpend`: outputs, commitments, a key
+//     image, a balanced base), but nothing signs a CLSAG or a Bulletproof+, and
+//     nothing broadcasts.
 //
 // The factory uses every module's PUBLIC signature only, so lanes editing
 // receive.js / blockScan.js internals do not touch this file.
@@ -59,6 +60,11 @@ import { offsetsToAbsolute, absoluteToOffsets, ringFromOuts } from './monero/out
 import { createHandle, nextIndexFor } from './payHandle.js';
 import { nodeSourceFromEnv } from './monero/nodes.js';
 import { getOuts } from './monero/nodeClient.js';
+// `buildSpend` is already the Bitcoin one in the btc rail's scope, so the
+// Monero builder is imported under its coin and exposed as monero.buildSpend.
+import {
+  buildSpend as buildXmrSpend, buildOutput, txPublicKeyFrom, outputDerivation,
+} from './monero/build.js';
 
 const DEFAULT_BTC_NETWORK = 'bc';
 
@@ -406,6 +412,14 @@ export function createWallet({
       return { ...built, node: answer.address, untrusted: answer.untrusted };
     },
     ring: { offsetsToAbsolute, absoluteToOffsets, ringFromOuts },
+
+    // An UNSIGNED transaction. The ring offsets, the recipients, the fee and the
+    // input's own one-time pair go in; bytes that frame and an id come out. It is
+    // a shape a node would still refuse, because the proofs are zero: no CLSAG,
+    // no Bulletproof+. The balance is real (taux and mu come back computed) and
+    // the outputs are decodable by their own recipients, which is what the tests
+    // prove through this same call.
+    buildSpend: buildXmrSpend, buildOutput, txPublicKeyFrom, outputDerivation,
   };
 
   return {
