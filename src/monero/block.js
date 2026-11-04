@@ -229,7 +229,13 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
   // other type writes into the base at all (RCTTypeFull's live in the prunable
   // section, which this build walks over rather than through).
   let rctFee = null;
+  // The pseudo-outputs, WHICHEVER SECTION CARRIES THEM: a type 2 transaction
+  // writes them in its base, every other RingCT type at the end of its prunable
+  // section. One field, because that is what they are to a signer, and the type
+  // decides which section a writer must put them back into. The prunable case
+  // used to be dropped on the floor, which left a spend with nothing to sign.
   const pseudoOutsByInput = [];
+  let prunablePseudoOuts = [];
   let baseEnd = prefixEnd;
   let prunableEnd = null;
   // The ecdh entry and the commitment belong to an OUTPUT, not to the base, and
@@ -265,7 +271,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       if (inputCount < 1 || ringSize < 1) {
         throw new Error(`That ${label} is RingCT type 6 without a key input to sign, so this build does not read it.`);
       }
-      prunableEnd = walkType6Prunable(cursor, inputCount, outputCount, ringSize);
+      ({ end: prunableEnd, pseudoOuts: prunablePseudoOuts } = walkType6Prunable(cursor, inputCount, outputCount, ringSize));
     } else if (read === 3n && label !== 'miner transaction') {
       // RingCT type 3 (RCTTypeBulletproof: a Bulletproof1 range proof with an
       // MLSAG). This is the simple variant, where a separate MLSAG signs each
@@ -288,7 +294,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       if (inputCount < 1 || ringSize < 1) {
         throw new Error(`That ${label} is RingCT type 3 without a key input to sign, so this build does not read it.`);
       }
-      prunableEnd = walkType3Prunable(cursor, inputCount, outputCount, ringSize);
+      ({ end: prunableEnd, pseudoOuts: prunablePseudoOuts } = walkType3Prunable(cursor, inputCount, outputCount, ringSize));
     } else if ((read === 4n || read === 5n) && label !== 'miner transaction') {
       // RingCT types 4 (RCTTypeBulletproof2) and 5 (RCTTypeCLSAG). These are the
       // first types with a COMPRESSED ecdh entry: eight bytes of truncated
@@ -306,9 +312,9 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       if (inputCount < 1 || ringSize < 1) {
         throw new Error(`That ${label} is RingCT type ${read} without a key input to sign, so this build does not read it.`);
       }
-      prunableEnd = walkBulletproof2FamilyPrunable(
+      ({ end: prunableEnd, pseudoOuts: prunablePseudoOuts } = walkBulletproof2FamilyPrunable(
         cursor, inputCount, outputCount, ringSize, read === 5n ? 'CLSAG' : 'MLSAG',
-      );
+      ));
     } else if ((read === 1n || read === 2n) && label !== 'miner transaction') {
       // RingCT types 1 (RCTTypeFull) and 2 (RCTTypeSimple): the pre-Bulletproof2
       // pair. Borromean range proofs, and an UNCOMPRESSED ecdh entry per output
@@ -335,7 +341,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       if (inputCount < 1 || ringSize < 1) {
         throw new Error(`That ${label} is RingCT type ${read} without a key input to sign, so this build does not read it.`);
       }
-      prunableEnd = walkBorromeanPrunable(cursor, inputCount, outputCount, ringSize, read === 1n);
+      ({ end: prunableEnd, pseudoOuts: prunablePseudoOuts } = walkBorromeanPrunable(cursor, inputCount, outputCount, ringSize, read === 1n));
     } else if (read !== 0n) {
       throw new Error(
         `That ${label} carries RingCT type ${read}. Every miner transaction Monero has mined since RingCT is type Null, so another type means a prunable section this build refuses to guess its way through. This is a refused read, not a finding.`,
@@ -382,7 +388,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
     genHeight: coinbase ? inputs[0].height : null,
     rctType,
     rctFee,
-    pseudoOuts: pseudoOutsByInput,
+    pseudoOuts: pseudoOutsByInput.length > 0 ? pseudoOutsByInput : prunablePseudoOuts,
     start,
     prefixEnd,
     baseEnd,
@@ -421,8 +427,12 @@ function walkType6Prunable(cursor, inputCount, outputCount, ringSize) {
     cursor.take(32, `input ${i} CLSAG D`);
   }
   // One pseudo-output commitment per input.
-  cursor.take(32 * inputCount, 'pseudo-output commitments');
-  return cursor.at;
+  // One pseudo-output commitment per input. Kept, not dropped: a signature
+  // signs against these, so a reader that walks over them leaves a spender unable
+  // to rebuild what the chain verifies.
+  const pseudoOuts = [];
+  for (let i = 0; i < inputCount; i += 1) pseudoOuts.push(cursor.take(32, `input ${i} pseudo-output`));
+  return { end: cursor.at, pseudoOuts };
 }
 
 // The type 4 and type 5 prunable section. Both carry Bulletproof(s) and a
@@ -473,8 +483,12 @@ function walkBulletproof2FamilyPrunable(cursor, inputCount, outputCount, ringSiz
       cursor.take(32, `input ${i} MLSAG cc`);
     }
   }
-  cursor.take(32 * inputCount, 'pseudo-output commitments');
-  return cursor.at;
+  // One pseudo-output commitment per input. Kept, not dropped: a signature
+  // signs against these, so a reader that walks over them leaves a spender unable
+  // to rebuild what the chain verifies.
+  const pseudoOuts = [];
+  for (let i = 0; i < inputCount; i += 1) pseudoOuts.push(cursor.take(32, `input ${i} pseudo-output`));
+  return { end: cursor.at, pseudoOuts };
 }
 
 // The type 1 and type 2 prunable section: Borromean range proofs, then the
@@ -513,10 +527,13 @@ function walkBorromeanPrunable(cursor, inputCount, outputCount, ringSize, full) 
       cursor.take(32, `input ${i} MLSAG cc`);
     }
   }
-  // No pseudoOuts here. The prunable array is written only for Bulletproof,
-  // Bulletproof2, CLSAG and BulletproofPlus (rctTypes.h serialize_rctsig_prunable);
-  // Simple carries them in the base, and Full carries none at all.
-  return cursor.at;
+  // No pseudoOuts here: serialize_rctsig_prunable writes the prunable array for
+  // Bulletproof, Bulletproof2, CLSAG and BulletproofPlus only. Simple carries
+  // them in the base (serialize_rctsig_base), and Full carries none on the wire
+  // at all: expansion rebuilds its single pseudo-output from the input
+  // commitments. Returned as an empty list rather than absent, so every walker
+  // has the same shape.
+  return { end: cursor.at, pseudoOuts: [] };
 }
 
 // The transaction id, by version, byte for byte. Version 2: each section
@@ -714,6 +731,10 @@ function walkType3Prunable(cursor, inputCount, outputCount, ringSize) {
     cursor.take(32, `input ${i} MLSAG cc`);
   }
   // pseudoOuts: one per input, appended after the MLSAGs for this type.
-  cursor.take(32 * inputCount, 'pseudo-output commitments');
-  return cursor.at;
+  // One pseudo-output commitment per input. Kept, not dropped: a signature
+  // signs against these, so a reader that walks over them leaves a spender unable
+  // to rebuild what the chain verifies.
+  const pseudoOuts = [];
+  for (let i = 0; i < inputCount; i += 1) pseudoOuts.push(cursor.take(32, `input ${i} pseudo-output`));
+  return { end: cursor.at, pseudoOuts };
 }

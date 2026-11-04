@@ -571,3 +571,92 @@ export async function getOuts(node, { outputs, getTxid = false } = {}, { pool = 
     if (timer) clearTimeout(timer);
   }
 }
+
+// The submit door: hand a transaction to a stranger and ask what it thinks.
+//
+// This is the only door where the node is not answering with bytes it holds but
+// judging bytes the wallet made. Two things follow. First, a refusal has to be
+// read rather than thrown blindly: a monerod says `status: "Failed"` with a
+// `reason`, and that reason is the most useful sentence in this file's whole
+// surface (it is how "the daemon parsed your bytes and disliked the signature"
+// is told apart from "the daemon could not parse your bytes at all"). Second,
+// nothing here retries: a submission is not idempotent in the wallet's eyes even
+// though the daemon deduplicates by id, so the caller gets exactly one answer.
+//
+// `doNotRelay` is passed through and returned, because a caller building a
+// transaction while offline may want the daemon to hold it.
+export async function submitTx(node, { txAsHex, doNotRelay = false } = {}, { pool = null, env, ...options } = {}) {
+  const hexText = String(txAsHex ?? '').trim().toLowerCase();
+  if (hexText.length === 0 || hexText.length % 2 !== 0 || !HEX.test(hexText)) {
+    throw new Error('A submitted transaction is even-length hex bytes.');
+  }
+  const address = cleanNode(node);
+  const pinned = poolFor(pool, address, env);
+  pinned.assertCurrent(address);
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  if (typeof fetchImpl !== 'function') throw new Error('A node call needs a way to fetch.');
+
+  const controller = options.timeoutSignal ? null : new AbortController();
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 20000;
+  let timedOut = false;
+  const timer = controller ? setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs) : null;
+  const noAnswer = (error) => (timedOut
+    ? new Error(`The Monero node ${address} did not answer the submission within ${timeoutMs} ms. The transaction may or may not be in its pool: a submission is the one call whose silence is ambiguous.`)
+    : new Error(`The Monero node ${address} did not answer the submission: ${error?.message || 'no answer'}. The transaction may or may not be in its pool.`));
+
+  try {
+    let response;
+    try {
+      response = await fetchImpl(`http://${address}/send_raw_transaction`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tx_as_hex: hexText, do_not_relay: doNotRelay === true }),
+        redirect: 'error',
+        signal: options.timeoutSignal ?? controller.signal,
+      });
+    } catch (error) {
+      pinned.abandon(address);
+      throw noAnswer(error);
+    }
+    if (!response || typeof response.text !== 'function') {
+      throw new Error(`The Monero node ${address} answered the submission with something that is not a response.`);
+    }
+    if (response.url && !sameHost(address, response.url)) {
+      throw new Error(`The Monero node ${address} sent the submission to another host. That is a different server, so nothing it says is used.`);
+    }
+    const text = await response.text();
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // No JSON at all. An empty body with a 2xx is a daemon that took the
+      // transaction and said nothing, which is what an older monerod does; any
+      // other combination is the HTTP layer failing and is refused.
+      if (response.ok && text.trim() === '') return { accepted: true, status: 'OK', reason: '', txid: null, address, doNotRelay: doNotRelay === true, untrusted: false, doubleSpend: false, lowMixin: false };
+      throw new Error(`The Monero node ${address} answered the submission with something that is not JSON (status ${response.status}).`);
+    }
+    if (!response.ok && typeof body.status !== 'string') {
+      throw new Error(`The Monero node ${address} refused the submission with status ${response.status}.`);
+    }
+    const status = typeof body.status === 'string' ? body.status : '';
+    const reason = typeof body.reason === 'string' ? body.reason : '';
+    const txid = typeof body.tx_hash === 'string' && body.tx_hash !== '' ? body.tx_hash.toLowerCase() : null;
+    const accepted = status === 'OK' || (status === '' && txid !== null);
+    return {
+      accepted,
+      status,
+      reason,
+      txid,
+      address,
+      doNotRelay: doNotRelay === true,
+      // A rejected transaction that still carries a body is the same shape as an
+      // accepted one, minus the id; both are returned rather than one thrown, so
+      // a caller can print the daemon's own sentence and decide.
+      untrusted: body.untrusted === true,
+      doubleSpend: body.double_spend === true,
+      lowMixin: body.low_mixin === true,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

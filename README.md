@@ -226,6 +226,29 @@ secret finds nothing, and the balance is checked on real curve points
 (`sum(pseudoOut) - sum(outPk) - fee*H = taux*G`). Eight source mutants were run
 against the builder and all were killed.
 
+**A real daemon has now read bytes this build wrote, and it caught a real
+defect.** `scripts/build-and-submit.mjs` fetches a ring from a live node, builds
+a spend, and submits it. The first submission came back `Sanity check failed`,
+which is `tx_sanity_check`'s answer to a transaction it cannot parse or EXPAND:
+`expand_transaction_1` refuses any `bulletproofs_plus` count but one, because
+Bulletproofs aggregate every output into a single proof. The writer had been
+writing one proof per output, the pre-Bulletproof shape. Every test of its own
+passed, because the tests and the writer shared the mistake. Pinned on real
+bytes now: every pinned mainnet transaction of a proof-carrying type carries
+exactly one proof, and its L vector is `6 + log2(outputs)` keys wide, and the
+writer must agree with the chain on both. After the fix the same bytes come back
+with an empty reason, which is the daemon saying it read and expanded them and
+then failed verification. The contrast is the evidence: the same bytes with one
+byte removed get "Sanity check failed" again.
+`test/fixtures/monero-built-spend.json` pins the transaction, the verdicts
+verbatim, and the inputs, so the build reproduces offline byte for byte without a
+node.
+
+Reading that prunable also fixed a second hole: the parser walked over the
+pseudo-outputs a signature signs against and threw them away. They are now kept,
+whichever section carries them (the base for type 2, the prunable for the
+Bulletproof family, nowhere for Full, which expansion rebuilds).
+
 What a built spend still is not: **signed**. The Bulletproof+ vectors and the
 CLSAG scalars are zero bytes of the right width, so a node would refuse it. `taux`
 and `mu` are computed rather than guessed, because they are arithmetic, and the

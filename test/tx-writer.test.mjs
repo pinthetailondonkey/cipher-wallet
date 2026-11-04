@@ -270,13 +270,13 @@ test('the type 6 prunable frames its counts in Monero\'s order, and reads back',
   // field order is what a swap breaks, and a swap is invisible while both sides
   // are the same length.
   const prunable = writeType6Prunable({
-    inputCount: 2, outputCount: 2, ringSize: 3, proofCount: 1, lCount: 3, rCount: 5,
+    inputCount: 2, outputCount: 2, ringSize: 3, lCount: 6, rCount: 8,
   });
-  const expectedLength = 1 + 32 * 6 + 1 + 32 * 3 + 1 + 32 * 5 + 2 * (32 * 3 + 32 + 32) + 32 * 2;
+  const expectedLength = 1 + 32 * 6 + 1 + 32 * 6 + 1 + 32 * 8 + 2 * (32 * 3 + 32 + 32) + 32 * 2;
   assert.equal(prunable.length, expectedLength, 'the section is exactly the fields it names');
   assert.equal(prunable[0], 1, 'the proof count comes first');
-  assert.equal(prunable[1 + 32 * 6], 3, 'the L count follows the proof\'s fixed keys');
-  assert.equal(prunable[1 + 32 * 6 + 1 + 32 * 3], 5, 'then the R count');
+  assert.equal(prunable[1 + 32 * 6], 6, 'the L count follows the proof\'s fixed keys');
+  assert.equal(prunable[1 + 32 * 6 + 1 + 32 * 6], 8, 'then the R count');
 
   const prefix = writeTransactionPrefix({
     version: 2,
@@ -316,8 +316,12 @@ test('the writer refuses a shape it cannot frame, by name', () => {
     /Null/, 'a Null base carries no fee byte');
   assert.throws(() => writeRctBase({ rctType: 2, fee: 1n, inputCount: 2, outputs: [output], pseudoOuts: [new Uint8Array(32)] }),
     /pseudo-output/, 'type 2 writes one pseudo-output per input');
-  assert.throws(() => writeType6Prunable({ inputCount: 1, outputCount: 1, ringSize: 1, proofCount: 2 }),
-    /refuses/, 'more proofs than outputs is a shape Monero refuses');
+  assert.throws(() => writeType6Prunable({ inputCount: 1, outputCount: 2, ringSize: 1, proofCount: 2 }),
+    /aggregates them into exactly one/, 'Bulletproof+ aggregates, so two outputs still carry one proof');
+  assert.throws(() => writeType6Prunable({ inputCount: 1, outputCount: 1, ringSize: 1, lCount: 5 }),
+    /at least six/, 'a proof narrower than the 64-bit range cannot cover it');
+  assert.throws(() => writeType6Prunable({ inputCount: 1, outputCount: 0, ringSize: 1 }),
+    /no outputs/, 'a proof covers outputs, so none needs none');
   assert.throws(() => writeType6Prunable({ inputCount: 0, outputCount: 1, ringSize: 1 }),
     /nothing to sign/);
 });

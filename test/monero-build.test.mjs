@@ -26,7 +26,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { rootFromMnemonic } from '../src/root.js';
 import { moneroPocket } from '../src/monero/pocket.js';
 import { readTransaction, transactionIdOf } from '../src/monero/block.js';
@@ -36,6 +36,8 @@ import {
   keyDerivation, keyImage, deriveSecretKey, secretToPublic, hashToScalar, decodePoint, encodePoint, bytesToNumberLE,
 } from '../src/monero/keys.js';
 import { offsetsToAbsolute } from '../src/monero/outs.js';
+import { writeType6Prunable } from '../src/monero/txWriter.js';
+import { readVarint } from '../src/monero/keys.js';
 import { buildOutput, buildSpend, txPublicKeyFrom, outputDerivation, extraWithTxPublicKey } from '../src/monero/build.js';
 
 const MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -44,7 +46,9 @@ const SENDER = moneroPocket(SEED, 0);
 const RECIPIENT = moneroPocket(SEED, 1);
 const STRANGER = moneroPocket(SEED, 7);
 
-const FIXTURE = JSON.parse(readFileSync(new URL('./fixtures/monero-tx-rct-5.json', import.meta.url), 'utf8'));
+const FIXTURE_DIR = new URL('./fixtures/', import.meta.url);
+const read = (name) => JSON.parse(readFileSync(new URL(name, FIXTURE_DIR), 'utf8'));
+const FIXTURE = read('monero-tx-rct-5.json');
 const RING_TX = readTransaction(
   Uint8Array.from(Buffer.from(FIXTURE.asHex.replace(/\s+/g, ''), 'hex')), 0, 'ring source',
 );
@@ -239,4 +243,39 @@ test('a built output is decodable by its own recipient at any position', () => {
     });
     assert.equal(value, XMR + BigInt(index));
   }
+});
+
+test('the proof section a build writes has the shape real mainnet proofs have', () => {
+  // A REAL DAEMON CAUGHT THIS. The first live submission was refused with
+  // "Sanity check failed", which is tx_sanity_check's answer to a transaction it
+  // could not parse or expand: expand_transaction_1 refuses any
+  // bulletproofs_plus count but ONE, because Bulletproofs aggregate every
+  // output into a single proof. This writer had been writing one proof per
+  // output, the pre-Bulletproof shape, and no test of its own noticed.
+  //
+  // So the pin is real bytes: every pinned mainnet transaction of a type that
+  // carries a proof has exactly one, and its L vector is 6 + log2(outputs) keys
+  // wide. The writer must agree with the chain on both.
+  const withProofs = readdirSync(FIXTURE_DIR)
+    .filter((f) => f.startsWith('monero-tx-') && f.endsWith('.json'))
+    .sort();
+  let checked = 0;
+  for (const file of withProofs) {
+    const fixture = read(new URL(file, FIXTURE_DIR));
+    const bytes = Uint8Array.from(Buffer.from(fixture.asHex.replace(/\s+/g, ''), 'hex'));
+    const tx = readTransaction(bytes, 0, 'proof shape');
+    if (![4, 5, 6].includes(tx.rctType)) continue;
+    const count = readVarint(bytes, tx.baseEnd);
+    const l = readVarint(bytes, tx.baseEnd + count.length + 32 * 6);
+    assert.equal(Number(count.value), 1, `${file}: a real proof section carries exactly one proof`);
+    assert.equal(Number(l.value), 6 + Math.ceil(Math.log2(tx.outputs.length)), `${file}: and its L width covers the outputs`);
+
+    const ours = writeType6Prunable({ inputCount: tx.inputs.length, outputCount: tx.outputs.length, ringSize: 3 });
+    assert.equal(ours[0], 1, 'so does the writer\'s');
+    assert.equal(Number(readVarint(ours, 1 + 32 * 6).value), 6 + Math.ceil(Math.log2(tx.outputs.length)));
+    checked += 1;
+  }
+  assert.ok(checked >= 5, `expected several proof-carrying fixtures, checked ${checked}`);
+  console.log(`[monero-build] proof aggregation pinned on ${checked} real transactions`);
+
 });

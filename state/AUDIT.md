@@ -1357,3 +1357,35 @@ LIMITS, in the module: the proofs are zero width-correct bytes (no CLSAG, no
 Bulletproof+), so a node would still refuse the transaction; nothing broadcasts.
 
 Gate at HEAD: 961/961 tests, build 40 modules, lint 0 errors (15 warnings).
+
+## 2026-11-04 — a real daemon read our bytes and found a real defect
+
+Base: 9c73049. The builder had never been near a node.
+
+FIX 1 (the defect, found by the daemon and not by any test of mine): Bulletproofs
+AGGREGATE. `expand_transaction_1` (cryptonote_format_utils.cpp) refuses any
+`bulletproofs_plus` count but one, and the writer was writing one proof per
+output (the pre-Bulletproof Borromean shape). Every test passed because the
+writer and the tests shared the mistake. Pinned on real bytes now: all five
+proof-carrying pinned mainnet transactions carry exactly ONE proof and an L
+vector of 6 + log2(outputs) keys; `writeType6Prunable` defaults to one proof and
+computes the width from the output count.
+
+FIX 2, found while reading the same section: the parser walked OVER the
+pseudo-outputs and dropped them, so a spender had nothing to sign. They are now
+returned, whichever section carries them (base for RCTTypeSimple, prunable for
+Bulletproof/Bulletproof2/CLSAG/BulletproofPlus, absent for Full, which upstream
+rebuilds at expansion). Real fixtures pin the type-1/type-2 boundary.
+
+EVIDENCE, live. `scripts/build-and-submit.mjs` fetches a ring from a shipped node,
+builds a spend and submits it. Before the fix: `Sanity check failed` (parse or
+expand). After: `status Failed`, `reason ""` (handle_incoming_tx failing
+verification with no specific flag), and the same bytes with the last byte
+removed get "Sanity check failed" again. So the daemon READ the bytes and
+disagrees only with the crypto. `test/fixtures/monero-built-spend.json` pins the
+transaction, both verdicts verbatim and the build inputs; the test rebuilds from
+those inputs offline, byte-identical, so a live verdict is attached to a test.
+
+LIMIT: the transaction is unsigned, so it is not in a pool and never will be.
+
+Gate at HEAD: 967/967 tests, build 40 modules, lint 0 errors (15 warnings).

@@ -207,15 +207,34 @@ export function writeRctBase({
 // pseudo-outputs come from the ring size and the input count, which is exactly
 // why Monero writes them with no count prefix. A caller that gets `ringSize`
 // from its own input's offsets cannot drift from what the reader expects.
+// THE PROOF COUNT IS ONE, NOT ONE PER OUTPUT, and getting this wrong is exactly
+// what a real daemon catches first. Bulletproofs AGGREGATE: every output's range
+// proof rides in a single proof whose L/R vectors are sized to cover them, and
+// expand_transaction_1 refuses any count but one
+// (`bulletproofs_plus.size() != 1`). The default here was outputCount for a
+// while, which is the pre-Bulletproof Borromean shape; a real mainnet fixture
+// with two outputs carries one proof of seven L keys, and now so does this.
+//
+// The vector width follows from the same rule: covering `outputs` amounts of 64
+// bits needs roundup_pow2(outputs) * 64 bits, so L has log2 of that many keys
+// (six for one output, seven for two, eight for three or four...). Upstream's
+// expand checks L.size() >= 6 and that the proof covers the output count.
 export function writeType6Prunable({
-  inputCount, outputCount, ringSize, proofCount = outputCount, lCount = 6, rCount = 6, pseudoOuts = [],
+  inputCount, outputCount, ringSize, proofCount = 1, lCount, rCount, pseudoOuts = [],
 } = {}) {
   const inputs = count(inputCount, 'input count');
   const outputs = count(outputCount, 'output count');
   const ring = count(ringSize, 'ring size');
   const proofs = count(proofCount, 'Bulletproof+ count');
-  if (proofs > outputs) {
-    throw new Error(`That transaction would carry ${proofs} Bulletproof+ proofs for ${outputs} output(s), which Monero refuses.`);
+  if (outputs < 1) throw new Error('A transaction with no outputs carries no range proof, and this writer writes one.');
+  if (proofs !== 1) {
+    throw new Error(`That transaction would carry ${proofs} Bulletproof+ proof(s) for ${outputs} output(s). Monero aggregates them into exactly one, and expand_transaction_1 refuses any other count.`);
+  }
+  const width = 6 + Math.ceil(Math.log2(outputs));
+  const lSize = count(lCount ?? width, 'L size');
+  const rSize = count(rCount ?? width, 'R size');
+  if (lSize < 6 || rSize < 6) {
+    throw new Error(`A Bulletproof+ proof needs at least six L and R keys (one per doubling of the 64-bit range); ${lSize}/${rSize} was given.`);
   }
   if (inputs < 1 || ring < 1) {
     throw new Error('A type 6 prunable section needs at least one input with a ring: a CLSAG has nothing to sign otherwise.');
@@ -224,8 +243,8 @@ export function writeType6Prunable({
   const parts = [varint(BigInt(proofs))];
   for (let p = 0; p < proofs; p += 1) {
     parts.push(zeros(32 * 6));                    // A, S, T1, T2, taux, mu
-    parts.push(varint(BigInt(lCount)), zeros(32 * lCount));
-    parts.push(varint(BigInt(rCount)), zeros(32 * rCount));
+    parts.push(varint(BigInt(lSize)), zeros(32 * lSize));
+    parts.push(varint(BigInt(rSize)), zeros(32 * rSize));
   }
   for (let i = 0; i < inputs; i += 1) {
     parts.push(zeros(32 * ring));                 // the CLSAG's ring scalars
