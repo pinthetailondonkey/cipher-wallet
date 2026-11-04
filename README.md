@@ -292,6 +292,13 @@ believes one `fetchFilter` by design; the pool is how a caller stops doing so.
 `test/quorum-scan.test.mjs` pins the agreed-over-a-liar path, a disagreement
 refused, and a one-peer pool refusing because one peer is not a witness.
 
+Verifying a filter means rebuilding it, which needs the scripts the block's
+inputs spend — and a real block spends money from before the walk. When the
+peer client can `fetchTx` (it can, over `MSG_WITNESS_TX`), those previous
+transactions are fetched once and cached, so a pooled scan of a realistic block
+verifies instead of refusing; without it the honest refusal stands.
+`test/pooled-prevouts.test.mjs` pins both.
+
 Work is now checked too. `walkBack` and `walkHeadersForward` decode each
 header's nBits and require its double-sha256 to be at or below the target the
 header names; a header that does not is refused by name. So a never-mined
