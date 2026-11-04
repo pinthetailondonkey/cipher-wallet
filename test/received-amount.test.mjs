@@ -18,11 +18,13 @@
 // here and in e1c6826's record.
 //
 // Zebra-1's scope guard on the decode-path consistency once proved that
-// decodeAmount inverts the existing encoder. That still held after the F1
-// rewrite, but it is no longer the interesting part: the amount path is now
-// pinned to Monero's own encoding in test/ringct-amount-decode.test.mjs, and
-// this file keeps only what is specific to this fixture — the walked bytes,
-// byte-exact, and the fact that they are ciphertext.
+// decodeAmount inverts the existing encoder. That held only for the invented
+// tuple and no longer holds at all: the F1 rewrite made 16 bytes an error, and
+// this file never imported the decoder. It is width-and-bytes only now. The
+// amount path is pinned to Monero's own encoding in
+// test/ringct-amount-decode.test.mjs, and this file keeps only what is specific
+// to this fixture: the walked bytes, byte-exact, and the fact that they are
+// ciphertext.
 //
 // The earlier header said "rctType 6, pre-Plus", which is wrong on the type
 // number: RCTTypeBulletproofPlus IS 6 (rctTypes.h:287), so type 6 is post-Plus.

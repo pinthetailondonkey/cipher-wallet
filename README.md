@@ -34,10 +34,16 @@ recovery shards, and nothing here has been run against real money.
   recomputed from G in the test; both pads to literal bytes from the quoted
   `ecdhDecode`; the widths (eight for types 4/5/6, sixty-four for 1/2/3) to
   eleven real mainnet transactions across all six types. Then the guard that
-  matters: `decodeRct`
-  rebuilds the output's Pedersen commitment from the pair it decoded and refuses
-  on a mismatch, and so does this build. A wrong derivation therefore produces a
-  named refusal instead of a plausible number.
+  matters: `decodeRct` rebuilds the output's Pedersen commitment from the pair
+  it decoded and refuses on a mismatch, and so does this build.
+  **The qualifier matters:** the refusal is real only when the commitment comes
+  from the chain. Hand `decodeAmount` its own `info` *and* a commitment the
+  caller computed, and `C = mask*G + amount*H` is the equation it just solved,
+  so any pair passes, including a lie. With the chain's commitment and a wrong
+  derivation it refuses 0 of 1000 random derivations per type passing, and 0 of
+  32 single-bit flips. Nothing in the signature binds the commitment to a
+  transaction, so "the chain's" is a caller convention, not an enforced one.
+  `decodeAmount` also has no caller in `src/` yet; the tests drive it.
   **What is still not pinned, and cannot be from inside this repository:** a
   real amount that matches one the owner knows, because the pad needs the view
   secret and keys stay out. So the commitment check proves a decode is *a* valid

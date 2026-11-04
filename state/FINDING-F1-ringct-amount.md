@@ -133,8 +133,15 @@ not re-derived; each is now answered point by point.
    `derive_secret_key` vectors by recovering the scalar as `derived - base mod l` — no expected
    value authored here. The two pads are `cn_fast_hash("amount" || k)` and
    `hash_to_scalar("commitment_mask" || k)`, pinned to literal bytes.
-3. **Reachability (claim 3).** Answered by the same change: the bytes are exposed and the only
-   caller is no longer a test. `received-amount` and the new suite drive it from real fixtures.
+3. **Reachability (claim 3).** Answered by the same change: the bytes are exposed. Reachable from
+   *tests* only — nothing in `src/` calls `decodeAmount` yet, so "the only caller is a test" is
+   still true, it is just a fixture-driven test now rather than a self-inverting one.
+4. **The guard, and what it does not prove.** `decodeRct` refuses unless the decoded pair rebuilds
+   `outPk[i]`, and so does this build. That refusal is real only when the commitment comes from the
+   chain: a caller that supplies both `info` and its own commitment is re-solving the equation it
+   handed in, so any pair passes, lie included. Nothing in the signature binds the commitment to a
+   transaction. Measured, with the chain's commitment: 0 of 1000 random derivations per type pass,
+   and 0 of 32 single-bit flips.
 
 **The part that was not in F1.** `decodeRct` does not stop at the decode: it rebuilds
 `Ctmp = mask*G + amount*H` and refuses unless it equals `outPk[i]`. F1 did not name this, and it is

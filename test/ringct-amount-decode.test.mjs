@@ -61,6 +61,7 @@ const concat = (...parts) => {
   return out;
 };
 const G = bytesOf('58666666666666666666666666666666 66666666666666666666666666666666');
+const G_POINT = decodePoint(G);
 
 function fixture(name) {
   const json = JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
@@ -165,7 +166,10 @@ test('real transactions carry 8 or 64 bytes of ecdh per output, never 16', () =>
     for (const output of tx.outputs) {
       assert.ok(output.ecdh instanceof Uint8Array, `${name}: output has no ecdh slice`);
       assert.equal(output.ecdh.length, width, `${name}: type ${tx.rctType} ecdh width`);
-      assert.match(output.commitment, /^[0-9a-f]{64}$/);
+      // Both fields are bytes. A hex string here would make Buffer.from read it
+      // as UTF-8 and produce 64 wrong bytes with no error.
+      assert.ok(output.commitment instanceof Uint8Array, `${name}: commitment is bytes`);
+      assert.equal(output.commitment.length, 32);
     }
     console.log(`[ringct-amount] ${name}: type ${tx.rctType}, ${tx.outputs.length} outputs, ${width}B ecdh each`);
   }
@@ -179,11 +183,27 @@ test('decodeAmount refuses sixteen bytes by name, for every type', () => {
         index: 0,
         info: new Uint8Array(16),
         rctType,
-        commitment: '00'.repeat(32),
+        commitment: new Uint8Array(32),
       }),
       /eight|sixty-four/,
     );
   }
+});
+
+// The commitment does not have to come from a walk, but a string of hex and a
+// buffer of bytes must both work, and must mean the same thing. The string form
+// is the one a caller can silently get wrong.
+test('a commitment is accepted as bytes or as spaced hex, and both agree', () => {
+  const output = readTransaction(fixture('monero-tx-ringct-type6').bytes, 0, 'x').outputs[0];
+  const asHex = hex.encode(output.commitment);
+  const derivation = new Uint8Array(32).fill(0x11);
+  const bytesVerdict = (() => { try { decodeAmount({ derivation, index: 0, info: output.ecdh, rctType: 6, commitment: output.commitment }); return 'pass'; } catch (e) { return e.message; } })();
+  const hexVerdict = (() => { try { decodeAmount({ derivation, index: 0, info: output.ecdh, rctType: 6, commitment: asHex }); return 'pass'; } catch (e) { return e.message; } })();
+  assert.equal(bytesVerdict, hexVerdict);
+  // And the spaced fixture convention is accepted too.
+  const spaced = `${asHex.slice(0, 32)} ${asHex.slice(32)}`;
+  const spacedVerdict = (() => { try { decodeAmount({ derivation, index: 0, info: output.ecdh, rctType: 6, commitment: spaced }); return 'pass'; } catch (e) { return e.message; } })();
+  assert.equal(spacedVerdict, bytesVerdict);
 });
 
 // 5 — the guard on real bytes. With a derivation that is not the owner's, the
@@ -326,4 +346,65 @@ test('near-miss derivations and mispointed info are all refused on real bytes', 
     /commitment/i,
   );
   console.log('[ringct-amount] 0/32 one-bit derivation flips pass; wrong index and swapped ecdh refused');
+});
+
+// The `src/` caller, on real bytes. Membership and value are separate claims:
+// the scan decides membership, decodeMatchedAmounts takes the value only for
+// outputs that already matched, and reports a refusal rather than dropping the
+// output, so a broken decode cannot look like an absent payment.
+//
+// A pocket that matches the fixture is forged here by setting
+// spendSecret = outKey - Hs(derivation, i), so the derived one-time key lands
+// exactly on the chain's. The view secret is still arbitrary, so the derivation
+// is the wrong one and the decode must refuse. A real amount needs the owner's
+// view secret, which is not in this repository.
+test('the scan layer carries a matched output through to a named refusal', async () => {
+  const { keyDerivation, scReduce32, decodePoint, encodePoint, bytesToNumberLE, GROUP_ORDER } = await import('../src/monero/keys.js');
+  const { scanTransaction, decodeMatchedAmounts, transactionPublicKey } = await import('../src/monero/scan.js');
+
+  const { bytes } = fixture('monero-tx-ringct-type6');
+  const tx = readTransaction(bytes, 0, 'type6 fixture');
+  tx.extra = tx.extra ?? new Uint8Array();
+  // The walk emits hex output keys; the scan boundary takes bytes. viewTag is
+  // dropped because the view secret here is arbitrary, so the one-byte tag
+  // cannot match and would skip every output before the full comparison. That
+  // is the tag filter working, not a fault.
+  const outputs = tx.outputs.map((o) => ({ ...o, key: bytesOf(o.key), viewTag: undefined }));
+
+  const txPub = transactionPublicKey(tx.extra);
+  const viewSecret = scReduce32(new Uint8Array(32).fill(7));
+  // spend = outKey - Hs(derivation, 0)*G, a POINT subtraction. Deriving a spend
+  // SCALAR from it only works when the result happens to be a scalar, which it
+  // generally is not, so the public key is forged directly.
+  const hs = bytesToNumberLE(derivationToScalar(keyDerivation(txPub, viewSecret), 0));
+  const spend = encodePoint(decodePoint(outputs[0].key).subtract(G_POINT.multiplyUnsafe(hs % GROUP_ORDER)));
+
+  const pocket = { index: 0, spend, viewSecret };
+  const matches = scanTransaction({ pocket, transactionPublicKey: txPub, outputs });
+  assert.deepEqual(matches, [0], 'the forged pocket matches output 0 and only output 0');
+
+  const decoded = decodeMatchedAmounts({ pockets: [pocket], transaction: { ...tx, outputs }, matches: [] });
+  assert.deepEqual(decoded, []);
+
+  const found = decodeMatchedAmounts({ pockets: [pocket], transaction: { ...tx, outputs }, matches: [{ pocket: 0, output: 0 }] });
+  assert.equal(found.length, 1, 'the match is reported, not dropped');
+  assert.equal(found[0].output, 0);
+  assert.match(found[0].refused ?? '', /commitment|superfluous/i, 'and it carries why');
+  assert.equal(found[0].value, undefined, 'a refusal never carries a number');
+  console.log('[ringct-amount] matched output survives to a refusal, with a reason and no number');
+});
+
+test('the amount step names its own refusals: no RingCT, and an unread output', async () => {
+  const { decodeMatchedAmounts } = await import('../src/monero/scan.js');
+  const coinbaseLike = { outputs: [], rctType: 0, extra: new Uint8Array() };
+  assert.throws(() => decodeMatchedAmounts({ pockets: [], transaction: coinbaseLike, matches: [] }), /RingCT type/);
+  // A well-formed extra (tag 0x01 then a key) so the failure is about the
+  // output, not the extra parse.
+  const withPubKey = new Uint8Array(33);
+  withPubKey[0] = 0x01;
+  const bare = { outputs: [{ key: new Uint8Array(32) }], rctType: 6, extra: withPubKey };
+  assert.throws(
+    () => decodeMatchedAmounts({ pockets: [{ index: 0, spend: new Uint8Array(32), viewSecret: new Uint8Array(32) }], transaction: bare, matches: [{ pocket: 0, output: 0 }] }),
+    /ecdh/,
+  );
 });

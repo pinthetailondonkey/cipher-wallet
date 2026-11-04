@@ -249,7 +249,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       rctType = 6;
       cursor.varint('ringct fee');
       for (let i = 0; i < outputCount; i += 1) ecdhByOutput.push(cursor.take(8, `output ${i} ecdh amount`));
-      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.take(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       // Every input of one transaction spans the same ring, so the first
       // input's key-offset count is the ring size; a CLSAG carries one scalar
@@ -275,7 +275,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
         ecdh.set(amount, 32);
         ecdhByOutput.push(ecdh);
       }
-      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.take(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
       if (inputCount < 1 || ringSize < 1) {
@@ -293,7 +293,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       rctType = Number(read);
       cursor.varint('ringct fee');
       for (let i = 0; i < outputCount; i += 1) ecdhByOutput.push(cursor.take(8, `output ${i} ecdh amount`));
-      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.take(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
       if (inputCount < 1 || ringSize < 1) {
@@ -322,7 +322,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
         ecdh.set(amount, 32);
         ecdhByOutput.push(ecdh);
       }
-      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.hex(32, `output ${i} commitment`));
+      for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.take(32, `output ${i} commitment`));
       baseEnd = cursor.at;
       const ringSize = inputs[0]?.kind === 'key' ? inputs[0].keyOffsets.length : 0;
       if (inputCount < 1 || ringSize < 1) {
@@ -343,6 +343,17 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
   // output. A Null transaction (every coinbase) carries neither, and the fields
   // stay absent rather than present-and-empty so a caller cannot mistake "this
   // transaction has no RingCT" for "this output's amount was already read".
+  //
+  // Both fields are bytes. An ecdh slice and a commitment from the same record
+  // must be the same kind of thing, or a caller reaches for Buffer.from on the
+  // one that looks like hex and silently reads a string as UTF-8.
+  //
+  // The arity check below cannot fire on any branch in this file: every branch
+  // loops `outputCount` exactly, and a short read is caught earlier by
+  // cursor.take. It stays because a future branch that loops differently would
+  // otherwise attach the wrong slice to the wrong output with no signal, and a
+  // silent misattachment is worse than dead code. Stated plainly rather than
+  // dressed up as a live guard.
   if (rctType !== null && rctType !== 0) {
     if (ecdhByOutput.length !== outputCount || commitmentByOutput.length !== outputCount) {
       throw new Error(`That ${label} carries ${ecdhByOutput.length} ecdh entries and ${commitmentByOutput.length} commitments for ${outputCount} outputs, which Monero never writes.`);

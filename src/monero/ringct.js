@@ -30,8 +30,9 @@
 //                     amount = info.amount - s2  (mod l)
 //                   These are scalar subtractions, not XOR.
 //
-//   amount bound    src/ringct/rctOps.cpp  decodeRct
-//                     h2d() refuses a decoded amount whose upper bytes are set
+//   amount bound    src/ringct/rctTypes.cpp  h2d (called from decodeRct,
+//                     src/ringct/rctSigs.cpp)
+//                     refuses a decoded amount whose upper bytes are set
 //                     ("long decoded amount contains superfluous data").
 //
 // AND THE CLAIM IS CHECKED AGAINST THE CHAIN. decodeRct does not stop at the

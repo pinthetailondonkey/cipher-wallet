@@ -7,13 +7,20 @@
 // one-time key. The spend public key is the base the address was built on; it is
 // never the thing compared, and an output key is never equal to it.
 //
-// Only the output key is compared. A match proves the output is ours; it says
-// nothing about how much it carries — RingCT amounts are the next piece of work.
+// Only the output key is compared for membership. A match proves the output is
+// ours; it says nothing about how much it carries. The amount is a SECOND step,
+// taken only for outputs that already matched, so a foreign output never spends
+// curve work on a decode it cannot pass.
+//
+// That second step is what gives `decodeAmount` a caller in `src/`; until now
+// it had one only in tests. It is wired with the chain's own commitment, which
+// is the only thing that makes the decode check mean anything.
 //
 // Everything here runs on the device, per pocket, with that pocket's own view
 // key. There is no shared view key, which is what L3 bought.
 
 import { keyDerivation, derivePublicKey, viewTag, isValidPublicKey, readVarint } from './keys.js';
+import { decodeAmount } from './ringct.js';
 
 const TX_EXTRA_TAG_PADDING = 0x00;
 const TX_EXTRA_TAG_PUBKEY = 0x01;
@@ -115,4 +122,48 @@ export function scanForPockets(pockets, transaction) {
     for (const index of indexes) found.push({ pocket: pocket.index, output: index });
   }
   return found;
+}
+
+// The amount step, for the outputs a scan already called ours.
+//
+// It is separate from scanForPockets on purpose: membership and value are
+// different claims with different confidence, and a caller that only wants to
+// know "is this mine" should not pay for a decode or have to handle its
+// refusals.
+//
+// The commitment handed to the decoder is the transaction's OWN, never one the
+// caller built, because that is the only version of the check that means
+// anything (see src/monero/ringct.js). An output that matched but will not
+// decode is REPORTED with its refusal rather than dropped: dropping it would
+// make a broken decode look like a payment that is not there.
+export function decodeMatchedAmounts({ pockets, transaction, matches } = {}) {
+  if (!Array.isArray(pockets) || !Array.isArray(matches)) {
+    throw new Error('A decode takes the pockets and the matches as lists.');
+  }
+  const outputs = transaction?.outputs ?? [];
+  const rctType = transaction?.rctType;
+  if (!Number.isInteger(rctType) || rctType < 1 || rctType > 6) {
+    throw new Error('That transaction carries no RingCT type this build decodes amounts for, which is every coinbase and every pre-RingCT transaction.');
+  }
+  const txPublicKey = transactionPublicKey(transaction.extra ?? new Uint8Array());
+  const byPocket = new Map(pockets.map((pocket) => [pocket.index, pocket]));
+  const decoded = [];
+  for (const match of matches) {
+    const pocket = byPocket.get(match.pocket);
+    const output = outputs[match.output];
+    if (!pocket || !output) throw new Error(`Match ${match.pocket}/${match.output} names a pocket or an output that is not here.`);
+    if (!(output.ecdh instanceof Uint8Array) || !(output.commitment instanceof Uint8Array)) {
+      throw new Error(`Output ${match.output} carries no ecdh slice and commitment, so it was not read by this build's walk.`);
+    }
+    const derivation = keyDerivation(txPublicKey, pocket.viewSecret);
+    try {
+      const { value, mask } = decodeAmount({
+        derivation, index: match.output, info: output.ecdh, rctType, commitment: output.commitment,
+      });
+      decoded.push({ pocket: match.pocket, output: match.output, value, mask });
+    } catch (error) {
+      decoded.push({ pocket: match.pocket, output: match.output, refused: error.message });
+    }
+  }
+  return decoded;
 }
