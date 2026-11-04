@@ -52,6 +52,17 @@ export const PUBLIC_NODES = Object.freeze([
   // Never discovered, never fetched.
 ]);
 
+// The stagenet list, for the funded lane: coins a faucet pays to an address this
+// build derived are the only honest way to test acceptance end-to-end, and
+// mainnet is no place for that. BOTH rows were live-verified 2026-11-04 against
+// a node whose get_info says nettype=stagenet and whose /get_block, /get_outs
+// and /get_transactions doors all answered at height 2243680. The funding script
+// pins its node anyway; these rows exist so a scan has rotation too.
+export const STAGENET_PUBLIC_NODES = Object.freeze([
+  { address: 'stagenet.xmr-tw.org:38081', allowClearnet: true },
+  { address: 'node.sethforprivacy.com:38089', allowClearnet: true },
+]);
+
 // The same two shapes the Bitcoin rail accepts, and the same refusal: an
 // address that is not a name, a port outside 1..65535, and — the one that
 // matters — a host reachable without Tor unless someone said clearnet is

@@ -121,6 +121,9 @@ export function ownedOutputToInput({ row, pocket, txBytes } = {}) {
     globalIndex,
     value,
     mask,
+    // `secret` is the name buildSpend signs with; `oneTimeSecret` kept because a
+    // caller diffing scan-vs-spend wants it spelled out. Same bytes, two names.
+    secret: oneTimeSecret,
     oneTimeSecret,
     txid: txidExpected,
     ourKey,

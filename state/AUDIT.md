@@ -1465,3 +1465,45 @@ the proof's correctness, and the fixture and README now say so instead of implyi
 the daemon's silence means acceptance.
 
 Gate at HEAD: 1002/1002 tests, build 42 modules, lint 0 errors.
+
+## 2026-11-04 (evening) — the funded lane, live coins, and the acceptance mystery
+
+Base: 890d1f8. The last commit joined scan to signer on synthetic data; this
+session ran it against REAL stagenet coins, and hit a wall worth writing down
+rather than hiding.
+
+WHAT WORKED, LIVE:
+- Two shipped STAGENET rows verified by hand (`STAGENET_PUBLIC_NODES`): both
+  answer get_info with nettype=stagenet and serve /get_block, /get_outs,
+  /get_transactions at height 2243680.
+- `scripts/stagenet-funded-spend.mjs`: faucet POST, poll until in_pool=false,
+  PROVED block scan -> owned row (value 0.1 XMR, mask, derivation,
+  globalIndex 10153725 straight from the daemon's output_indices) ->
+  ownedOutputToInput -> ring fetched from the SAME node with ours included and
+  cross-checked against our key/commitment -> buildSpend -> reader round-trip.
+- OUR OWN VERIFIERS ACCEPT A STRANGER'S TRANSACTION: a real type-6 stagenet tx at
+  height 2243600 has its CLSAG verified against a ring rebuilt from get_outs plus
+  a message recomputed from its own bytes, and its Bulletproof+ verified against
+  its commitments. Constants, hash orders and message construction are therefore
+  upstream-exact — this is the strongest statement yet about correctness.
+
+THE WALL: both public daemons refuse the built spend with status Failed,
+invalid_input=true, empty reason. A LOCAL v0.18.5 monerod in bootstrap mode
+reproduces it byte-for-byte (same flags) while syncing (height 3161 vs decoy
+heights ~2243684), and with verify:FATAL default categories prints NOTHING even
+at TRACE around the failure window — only "Using the bootstrap daemon" then
+"Failing RPC". Hypothesis under test: input verification consults an
+incomplete/restricted local view of the output set, so every decoy past its sync
+frontier is unresolvable. It is NOT testable quickly by submit-spamming.
+
+NEXT, QUEUED: let the local pruned node finish enough of the chain (its own p2p
+sync runs detached overnight), resubmit to 127.0.0.1:38085 where log verbosity is
+ours, and read the named failing check. No further remote submissions until then;
+further probing without that is guessing.
+
+ALSO LEARNED AND SHIPPED: get_outs refuses an index past a node's frontier
+(status Failed, no reason); decoy selection must probe-and-drop (the script now
+does). Fee for the funded lane comes from the node's own get_fee_estimate
+(20000/byte slow tier when measured), not a constant.
+
+Gate at HEAD: fund-input + own-outputs green (15/15 affected), lint clean.
