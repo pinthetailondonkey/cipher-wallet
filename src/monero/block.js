@@ -236,6 +236,11 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
   // used to be dropped on the floor, which left a spend with nothing to sign.
   const pseudoOutsByInput = [];
   let prunablePseudoOuts = [];
+  // The Bulletproof+ proofs of a type 6 transaction, kept so a caller can VERIFY
+  // what it just read. Nothing else reads them: they are a statement about the
+  // outputs' hidden amounts, and the only way to judge the statement is to check
+  // it against those very commitments.
+  let bulletproofsPlus = [];
   let baseEnd = prefixEnd;
   let prunableEnd = null;
   // The ecdh entry and the commitment belong to an OUTPUT, not to the base, and
@@ -271,7 +276,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       if (inputCount < 1 || ringSize < 1) {
         throw new Error(`That ${label} is RingCT type 6 without a key input to sign, so this build does not read it.`);
       }
-      ({ end: prunableEnd, pseudoOuts: prunablePseudoOuts } = walkType6Prunable(cursor, inputCount, outputCount, ringSize));
+      ({ end: prunableEnd, pseudoOuts: prunablePseudoOuts, bulletproofsPlus } = walkType6Prunable(cursor, inputCount, outputCount, ringSize));
     } else if (read === 3n && label !== 'miner transaction') {
       // RingCT type 3 (RCTTypeBulletproof: a Bulletproof1 range proof with an
       // MLSAG). This is the simple variant, where a separate MLSAG signs each
@@ -388,6 +393,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
     genHeight: coinbase ? inputs[0].height : null,
     rctType,
     rctFee,
+    bulletproofsPlus,
     pseudoOuts: pseudoOutsByInput.length > 0 ? pseudoOutsByInput : prunablePseudoOuts,
     start,
     prefixEnd,
@@ -407,17 +413,32 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
 // no count prefix because the ring size is fixed by the inputs; then one
 // pseudo-output key per input. Returns the offset where the section ends.
 // A count that runs past the bytes is refused where it is cut.
+//
+// THE PROOF FIELDS ARE KEPT, not walked over, for the same reason the CLSAG
+// scalars are: they are what a verifier checks, so a reader that drops them
+// leaves the wallet unable to judge a transaction it wrote itself. The field list
+// is A, A1, B, r1, s1, d1, L, R, in that order; V is absent because a verifier
+// rebuilds it from the outputs' own commitments (expand_transaction_1 does too).
 function walkType6Prunable(cursor, inputCount, outputCount, ringSize) {
   const bpCount = Number(cursor.varint('bulletproof plus count'));
   if (bpCount > outputCount) {
     throw new Error('That transaction carries more Bulletproof+ proofs than outputs, which Monero refuses.');
   }
+  const bulletproofsPlus = [];
   for (let p = 0; p < bpCount; p += 1) {
-    cursor.take(32 * 6, `Bulletproof+ ${p} fixed fields`);
-    const left = Number(cursor.varint(`Bulletproof+ ${p} L count`));
-    cursor.take(32 * left, `Bulletproof+ ${p} L`);
-    const right = Number(cursor.varint(`Bulletproof+ ${p} R count`));
-    cursor.take(32 * right, `Bulletproof+ ${p} R`);
+    const proof = {};
+    for (const field of ['A', 'A1', 'B', 'r1', 's1', 'd1']) {
+      proof[field] = cursor.take(32, `Bulletproof+ ${p} ${field}`);
+    }
+    for (const vector of ['L', 'R']) {
+      const size = Number(cursor.varint(`Bulletproof+ ${p} ${vector} count`));
+      if (size === 0) {
+        throw new Error(`That transaction carries a Bulletproof+ ${p} with an empty ${vector} vector, which nothing can verify.`);
+      }
+      proof[vector] = [];
+      for (let i = 0; i < size; i += 1) proof[vector].push(cursor.take(32, `Bulletproof+ ${p} ${vector} ${i}`));
+    }
+    bulletproofsPlus.push(proof);
   }
   // One CLSAG per input: ring scalars, then c1, then D. No count prefix,
   // because the ring size is fixed by the transaction's own inputs.
@@ -432,7 +453,7 @@ function walkType6Prunable(cursor, inputCount, outputCount, ringSize) {
   // to rebuild what the chain verifies.
   const pseudoOuts = [];
   for (let i = 0; i < inputCount; i += 1) pseudoOuts.push(cursor.take(32, `input ${i} pseudo-output`));
-  return { end: cursor.at, pseudoOuts };
+  return { end: cursor.at, pseudoOuts, bulletproofsPlus };
 }
 
 // The type 4 and type 5 prunable section. Both carry Bulletproof(s) and a

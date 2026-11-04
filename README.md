@@ -249,7 +249,7 @@ pseudo-outputs a signature signs against and threw them away. They are now kept,
 whichever section carries them (the base for type 2, the prunable for the
 Bulletproof family, nowhere for Full, which expansion rebuilds).
 
-**It is signed now, with one gap left.** `src/monero/clsag.js` signs one input
+**It is signed.** `src/monero/clsag.js` signs one input
 and checks one input, written from upstream's `CLSAG_Gen`/`verRctCLSAGSimple` and
 the device hooks beside them, including the parts that are traps: D is stored
 divided by eight while R uses the full point, the aggregation domains are 32-byte
@@ -261,18 +261,38 @@ every field one at a time, and then take the signature back OUT of a built
 transaction's wire bytes at the offsets the serializer writes and check it
 against a message recomputed from those bytes. Nine source mutants, all killed.
 
-What is still zero is the **Bulletproof+ range proof** (the right number of zero
-bytes in the right places), and that is the only thing standing between a real
-node's refusal and its acceptance. `scripts/build-and-submit.mjs` submits a
-SIGNED transaction to a live node: it is read and expanded (which is where the
-daemon checks the CLSAG count and that the key image in the signature equals the
-prefix's) and then fails verification with no specific reason. The last honest
-gap after that is funding: this wallet's input was never paid for on the chain,
-so the member at its ring position is its own rather than the chain's, while a
-node builds the ring from the chain. `taux`
-and `mu` are computed rather than guessed, because they are arithmetic, and the
-pseudo-output mask is derived from the transaction secret so a rebuild is
-byte-identical. `monero.buildSpend` reaches all of it from the wallet.
+**And now the range proof is real: not one field of the transaction is a zero
+placeholder any more.** `src/monero/bulletproofs.js` proves and checks a Bulletproof+ from
+upstream's `bulletproof_plus_PROVE`/`bulletproof_plus_VERIFY`, `init_exponents`,
+`compute_LR`, `hadamard_fold` and the transcript helpers, including the parts a
+reimplementation gets wrong quietly: the proof is ONE for every output (its L and
+R vectors widen instead), V is each commitment divided by eight and is not on the
+wire at all, the fold pairs the two HALVES rather than neighbouring indices, and
+the challenge products are built by an odd-shaped loop with overlapping writes
+that has to be copied rather than tidied. The verifier returns a reason string and
+runs inside a try, so a flipped byte that is no longer a curve point is a refusal
+and not a throw.
+
+The judgment that matters is a stranger's proof: `test/monero-bulletproofs.test.mjs`
+parses a real mainnet type 6 transaction, lifts the Bulletproof+ and the output
+commitments out of its own bytes, and requires the verifier to accept them. A
+prover and a verifier that share a mistake would agree with each other forever;
+only real bytes can tell you the transcript, the generators and the INV_EIGHT
+scaling are upstream's. Our own proofs are then round-tripped, mutated one field
+at a time, re-derived (V is checked against the commitment over eight), and lifted
+back out of a built transaction. Fifteen source mutants, all killed.
+
+`scripts/build-and-submit.mjs` submits the result to a live node: a signed,
+proved transaction that is read and expanded and then refused with no specific
+reason. **The one remaining gap is funding.** This wallet's input was never paid
+for on the chain, so the member at its ring position is its own rather than the
+chain's, while a node assembles the ring from the chain — and the daemon's silent
+"no" does not say which of balance, range proof or CLSAG it disliked, so the
+evidence that the proof is right is the real-proof test, not that sentence.
+`taux` and `mu` are computed rather than guessed, because they are arithmetic, and
+the pseudo-output mask is derived from the transaction secret so a rebuild is
+byte-identical. `monero.buildSpend` reaches all of it from the wallet, and
+`monero.rangeProof` is the proof on its own.
 
 The ring door's evidence had to be different, because a ring member is in no
 transaction. `scripts/pin-outs.mjs` captured one real answer and then proved it

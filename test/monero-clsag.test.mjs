@@ -33,7 +33,8 @@ import { commitmentOf } from '../src/monero/ringct.js';
 import * as keys from '../src/monero/keys.js';
 import { clsagMessage, signClsag, verifyClsag } from '../src/monero/clsag.js';
 import { buildOutput, buildSpend, extraWithTxPublicKey } from '../src/monero/build.js';
-import { writeTransactionPrefix, writeRctBase, writeType6Prunable, bulletproofPlusWidth } from '../src/monero/txWriter.js';
+import { writeTransactionPrefix, writeRctBase, writeType6Prunable } from '../src/monero/txWriter.js';
+import { bulletproofPlusKeys } from '../src/monero/bulletproofs.js';
 
 const MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const XMR = 1_000_000_000_000n;
@@ -185,15 +186,15 @@ test('THE JOIN: a signed transaction verifies against a message re-derived from 
 
   // Re-derive the message from the PARSED transaction, the way a verifier would:
   // prefix hash and base hash come from the wire bytes, and the proof keys are
-  // the zero bytes a proof would occupy.
+  // the proof's OWN keys, lifted out of the same bytes. They used to be zero bytes
+  // of the right width, which was true while the proof was a skeleton.
   const tx = readTransaction(built.bytes, 0, 'signed build');
   assert.equal(tx.end, built.bytes.length);
   assert.equal(transactionIdOf(tx), built.id);
-  const width = bulletproofPlusWidth(tx.outputs.length);
   const message = clsagMessage({
     prefixBytes: tx.prefixBytes,
     baseBytes: tx.baseBytes,
-    proofKeys: new Uint8Array(32 * (6 + 2 * width)),
+    proofKeys: bulletproofPlusKeys(tx.bulletproofsPlus[0]),
   });
 
   // Lift the signature back OUT of the wire, at the offsets

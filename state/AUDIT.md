@@ -1422,3 +1422,46 @@ LIMIT, unchanged and now the only crypto gap: the Bulletproof+ proof is still ze
 bytes. After that, funding.
 
 Gate at HEAD: 991/991 tests, build 41 modules, lint 0 errors (15 warnings).
+
+## 2026-11-04 — Bulletproof+: the last zero-byte field
+
+Base: b7c3bbe. A signed transaction still carried a range proof of zero bytes of
+the right width, so a node refused it at the proof and nothing else in the
+transaction could be judged by anyone but us.
+
+FIX: `src/monero/bulletproofs.js` — `proveBulletproofPlus`, `verifyBulletproofPlus`
+(a REASON STRING, whole body in a try, so a non-point from a flipped byte is a
+refusal), `writeBulletproofPlus`, `bulletproofPlusKeys`. `writeType6Prunable`
+writes real proofs; `buildSpend` proves every output amount under the mask its own
+commitment was built with, then signs the CLSAG over a message that hashes the
+proof's OWN keys. `monero.rangeProof` reaches it from the entry.
+
+THE TRAPS, each named in the module: the proof is ONE for every output and only
+its L and R vectors widen; V is the commitment DIVIDED BY EIGHT and is absent from
+the wire (a verifier rebuilds it as outPk * INV_EIGHT, which is why the transcript
+must hash a different value than the equation uses — that was the one real defect
+found here); the fold pairs the two HALVES, not neighbouring indices; the
+challenge products are built by an odd-shaped loop whose writes overlap; y, z and
+e must be nonzero, which upstream handles by re-rolling draws and this build
+handles with an attempt counter in the nonce seed.
+
+EVIDENCE: a REAL mainnet type 6 transaction's own Bulletproof+ verifies against
+its own output commitments, taken from its own bytes. That is the only judgment
+that can tell our transcript/generators/scaling from upstream's, because a prover
+and verifier sharing a mistake agree with each other forever. Then: every field of
+that real proof mutated one at a time, our own proofs round-tripped at 0 and 2^64-1
+and across one and two outputs, V re-derived from the commitment, the proof lifted
+back out of a built transaction's wire bytes, and the signature checked against a
+message built from the LIFTED proof keys (a signature over a width of zeroes must
+now fail). 15 source mutants, all killed.
+
+LIMIT, and it is the last one: funding. A signed, proved transaction is read and
+expanded by a live daemon and then refused with no specific reason. The daemon's
+silent false cannot say which of balance, range proof, key image or CLSAG it
+disliked, and our input was never paid for on the chain, so the CLSAG cannot
+verify on a node whatever the proof does: the ring a node assembles comes from the
+chain and our member at that position is ours. The real-proof test is what carries
+the proof's correctness, and the fixture and README now say so instead of implying
+the daemon's silence means acceptance.
+
+Gate at HEAD: 1002/1002 tests, build 42 modules, lint 0 errors.

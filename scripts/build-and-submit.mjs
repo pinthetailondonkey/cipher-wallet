@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Build one unsigned Monero spend and hand it to a real node.
+// Build one SIGNED, PROVED Monero spend and hand it to a real node.
 //
-// The point is not to have a valid transaction (the proofs are zero, so it is
-// not) but to make a stranger's daemon read the bytes this build wrote and say
-// WHERE it stopped. "Could not parse" and "parsed, but the signature is wrong"
-// are different verdicts about different halves of this build, and only a real
-// daemon can give either.
+// The point is to make a stranger's daemon read the bytes this build wrote and
+// say WHERE it stopped. "Could not parse" and "parsed, expanded, balance fine,
+// range proof fine, and then failed verification" are different verdicts about
+// different halves of this build, and only a real daemon can give either: the
+// second is what a fabricated input looks like from the outside.
 //
 // The ring is fetched live with the wallet's own door, from a real input's own
 // absolute positions, so the request is a real ring and not invented indices.
@@ -126,7 +126,7 @@ if (pinFile) {
   const { writeFileSync } = await import('node:fs');
   writeFileSync(pinFile, JSON.stringify({
     source: {
-      what: 'One UNSIGNED Monero spend built by this repository, and the two things a real daemon said about it. The verdicts are the evidence: the intact bytes are read and expanded and then fail verification (nothing is signed), while the same bytes with one byte removed fail the parse/expand stage by name.',
+      what: 'One SIGNED, PROVED Monero spend built by this repository, and the two things a real daemon said about it. The verdicts are the evidence: the intact bytes are read and expanded and then fail verification, while the same bytes with one byte removed fail the parse/expand stage by name.',
       node,
       nettype: 'mainnet',
       capturedAt: new Date().toISOString(),
@@ -134,7 +134,7 @@ if (pinFile) {
       ringIndicesFetched: indices,
       daemonSites: 'on_send_raw_tx (core_rpc_server.cpp) reports "Sanity check failed" for a blob tx_sanity_check cannot parse or expand, and a broader reason list for one it can; the empty reason is handle_incoming_tx failing verification with no specific flag set.',
       rederive: `node scripts/build-and-submit.mjs --node ${node}`,
-      note: 'The transaction is NOT in the chain and never will be: its input is an output this build constructed, not a funded one. The bytes are reproduced offline by the test from the build inputs below.',
+      note: 'The transaction is not in the chain: its input is an output this build constructed, not a funded one, so the ring the daemon assembles from the chain differs from ours at that member and verification stops there. Everything else is real: the Bulletproof+ range proof, the CLSAG, the balance, the encoding. The bytes are reproduced offline by the test from the build inputs below.',
     },
     build: {
       mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',

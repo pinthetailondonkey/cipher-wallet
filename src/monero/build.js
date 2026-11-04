@@ -12,15 +12,15 @@
 // commitment was wrong cannot survive that, because the scanner is the code the
 // wallet already trusts on real chain bytes.
 //
-// WHAT IS STILL ZERO, said here rather than discovered later:
-//   - THE PROOFS. The Bulletproof+ vectors and the CLSAG scalars are framing,
-//     so this writes the right number of zero bytes and nothing signs yet. The
-//     result is a transaction with the right SHAPE, not one a node would accept.
-//   - `taux` and `mu`, the two scalars the prunable carries, ARE computed and
-//     returned, because they are arithmetic: with pseudo-output masks r_i,
-//     output masks o_j and input masks m_k, the balance needs
-//     taux = sum(r) - sum(o) and the input side needs mu = sum(r) - sum(m). A
-//     later lane writes them; this lane makes them true instead of guessed.
+// WHAT IS WRITTEN NOW, and what is still missing:
+//   - THE PROOFS. The Bulletproof+ range proof is computed (bulletproofs.js) and
+//     written, and the CLSAG is signed over the message that hashes it. Thirteen
+//     days of "the shape is right" ended here.
+//   - WHAT IS STILL NOT RIGHT IS THE INPUT. Its key, its secret, its value and its
+//     mask are the caller's, so an unsigned call is a shape and a signed one is a
+//     transaction that only a ring and a funded output can make chain-valid. The
+//     amounts balance exactly, and `taux` and `mu` are returned so a caller can
+//     check the balance statement in scalar form.
 //
 // THE BALANCE, which is the property that must hold even unsigned:
 //     sum(pseudoOut_i) - sum(outPk_j) - fee*H = taux*G
@@ -48,9 +48,10 @@ import {
 import {
   derivationToScalar, commitmentMask, commitmentOf, encodeAmountForTest,
 } from './ringct.js';
-import { writeTransactionPrefix, writeRctBase, writeType6Prunable, bulletproofPlusWidth } from './txWriter.js';
+import { writeTransactionPrefix, writeRctBase, writeType6Prunable } from './txWriter.js';
 import { ringFromOuts } from './outs.js';
 import { clsagMessage, signClsag } from './clsag.js';
+import { proveBulletproofPlus, bulletproofPlusKeys } from './bulletproofs.js';
 import { readTransaction, transactionIdOf } from './block.js';
 
 const TX_EXTRA_TAG_PUBKEY = 0x01;
@@ -112,6 +113,7 @@ export function buildOutput({ derivation, index, spendPublic, value, rctType = D
   const ecdh = encodeAmountForTest({ derivation, index, value, rctType, mask });
   return {
     index,
+    value,
     key: derivePublicKey(derivation, index, spendPublic),
     viewTag: viewTag(derivation, index),
     ecdh,
@@ -204,16 +206,16 @@ export function buildSpend({
 
   // SIGNED: the message first, then the signature, then the prunable that carries
   // it. The order is forced by the message: get_pre_mlsag_hash hashes the prefix
-  // (which already carries the key image) and the base, so both must be written
-  // before anything is signed.
+  // (which already carries the key image), the base, AND the proof's keys, so the
+  // proof is computed before anything is signed and written after.
   let signature = null;
+  let proof = null;
   if (signed) {
-    const width = bulletproofPlusWidth(outputs.length);
-    // The proof field keys the message hashes: six fixed keys per proof then its
-    // L and R vectors. Zero bytes, because the proof itself is not computed yet,
-    // but the WIDTH is the real width, which is what the hash commits to.
-    const proofKeys = new Uint8Array(32 * (6 + 2 * width));
-    const message = clsagMessage({ prefixBytes: prefix, baseBytes: base, proofKeys });
+    // The proof covers every output amount under the mask each output's own
+    // commitment was built with. Proving the amounts and committing them
+    // elsewhere would verify here and fail the balance check at a node.
+    proof = proveBulletproofPlus({ amounts: outputs.map((o) => o.value), masks: outputs.map((o) => o.mask) });
+    const message = clsagMessage({ prefixBytes: prefix, baseBytes: base, proofKeys: bulletproofPlusKeys(proof) });
     signature = signClsag({
       ring,
       position,
@@ -231,6 +233,7 @@ export function buildSpend({
     ringSize: keyOffsets.length,
     pseudoOuts: [pseudoOut],
     clsags: signature ? [signature] : [],
+    proofs: proof ? [proof] : [],
   });
   const bytes = concatBytes([prefix, base, prunable]);
 
@@ -252,6 +255,11 @@ export function buildSpend({
     keyImage: keyImageOf,
     signed,
     signature,
+    proof,
+    // The ring as ORDERED and bound, so a caller (and the test) can check the
+    // signature against what it actually commits to without re-deriving the order.
+    ring,
+    position,
     pseudoOut,
     // The mask behind the pseudo-output, so a caller (and the test) can check
     // the balance statement without recomputing it.

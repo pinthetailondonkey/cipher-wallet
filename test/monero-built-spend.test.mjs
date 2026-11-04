@@ -14,9 +14,13 @@
 //      attached to a test at all, and the pseudo-output mask is derived from the
 //      transaction secret rather than drawn, which is why it holds.
 //
-// WHAT THIS DOES NOT PROVE, and it is the whole remaining gap: the transaction is
-// not SIGNED. It is not in a chain and never will be. A daemon accepting bytes is
-// not the same as a daemon accepting a transaction.
+// WHAT THIS DOES NOT PROVE, and it is the whole remaining gap: THE INPUT IS NOT
+// FUNDED. Its one-time secret, its value and its mask are this build's, so the
+// ring the daemon assembles from the chain differs from ours at that one member
+// and verification fails there. Everything else in the transaction is real: the
+// range proof, the signature, the balance, the encoding, and the daemon READS all
+// of it. A daemon accepting bytes is still not a daemon accepting a transaction,
+// and an empty reason does not name which check stopped it.
 //
 // Every daemon sentence is recorded verbatim from the capture, including the
 // empty one, because "no reason" is itself the finding: it means verification
@@ -33,7 +37,7 @@ import { readTransaction } from '../src/monero/block.js';
 import * as keys from '../src/monero/keys.js';
 import { buildOutput, buildSpend } from '../src/monero/build.js';
 import { verifyClsag, clsagMessage } from '../src/monero/clsag.js';
-import { bulletproofPlusWidth } from '../src/monero/txWriter.js';
+import { bulletproofPlusKeys } from '../src/monero/bulletproofs.js';
 import { commitmentOf } from '../src/monero/ringct.js';
 import { offsetsToAbsolute } from '../src/monero/outs.js';
 import { submitTx } from '../src/monero/nodeClient.js';
@@ -104,7 +108,15 @@ test('a real daemon READ the intact signed bytes and then failed them on verific
   // blob it cannot parse or expand and says "Sanity check failed" by name. The
   // intact bytes did not get that sentence, so parse and expand succeeded and it
   // is handle_incoming_tx's verification that failed. If this ever becomes
-  // "Sanity check failed", the SHAPE broke, not the signature.
+  // "Sanity check failed", the SHAPE broke, not the crypto.
+  //
+  // WHAT AN EMPTY REASON DOES NOT SAY, because it is the honest limit of a
+  // stranger's sentence: it does not name WHICH verification failed. Balance,
+  // range proof, key image and CLSAG all refuse with the same silent false, and
+  // our input is fabricated, so the CLSAG cannot verify on a node whatever the
+  // proof does. The evidence that the RANGE PROOF is right is the other test in
+  // test/monero-bulletproofs.test.mjs: our verifier accepts a real mainnet proof,
+  // and a real daemon accepts nothing of ours here but knows ours is not garbage.
   assert.equal(intact.reason, '', 'no specific reason means verification, not framing');
 });
 
@@ -151,10 +163,13 @@ test('the pinned transaction is SIGNED, and its signature verifies against its o
     c1: tail.slice(tail.length - pseudo - 64, tail.length - pseudo - 32),
     D: tail.slice(tail.length - pseudo - 32, tail.length - pseudo),
   };
+  // The message hashes the PROOF'S OWN KEYS, lifted from the same bytes: a
+  // signature over a width of zeroes would be a signature over the wrong
+  // transaction, and this test failed that way before the proof was computed.
   const message = clsagMessage({
     prefixBytes: tx.prefixBytes,
     baseBytes: tx.baseBytes,
-    proofKeys: new Uint8Array(32 * (6 + 2 * bulletproofPlusWidth(tx.outputs.length))),
+    proofKeys: bulletproofPlusKeys(tx.bulletproofsPlus[0]),
   });
   const reason = verifyClsag({
     ring: BUILD.ringMembers.map((m) => ({ key: hex.decode(m.key), mask: hex.decode(m.mask) })),

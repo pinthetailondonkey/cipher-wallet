@@ -69,6 +69,7 @@ import {
   buildSpend as buildXmrSpend, buildOutput, txPublicKeyFrom, outputDerivation,
 } from './monero/build.js';
 import { clsagMessage, signClsag, verifyClsag } from './monero/clsag.js';
+import { proveBulletproofPlus, verifyBulletproofPlus } from './monero/bulletproofs.js';
 
 const DEFAULT_BTC_NETWORK = 'bc';
 
@@ -433,16 +434,20 @@ export function createWallet({
       }
     },
 
-    // An UNSIGNED transaction. The ring offsets, the recipients, the fee and the
-    // input's own one-time pair go in; bytes that frame and an id come out. It is
-    // a shape a node would still refuse, because the proofs are zero: no CLSAG,
-    // no Bulletproof+. The balance is real (taux and mu come back computed) and
-    // the outputs are decodable by their own recipients, which is what the tests
-    // prove through this same call.
+    // A transaction. The ring offsets, the recipients, the fee and the input's own
+    // one-time pair go in; bytes with a real Bulletproof+ range proof and, when a
+    // ring is supplied, a real CLSAG come out. What a node still refuses is the
+    // INPUT: it was never paid for on the chain, so the ring a daemon assembles
+    // differs from ours at our own member. The balance is real (taux and mu come
+    // back computed) and the outputs are decodable by their own recipients.
     buildSpend: buildXmrSpend, buildOutput, txPublicKeyFrom, outputDerivation,
     // The signature one input carries, reachable on its own so a caller can sign
     // or check something that is not a whole transaction.
     clsag: { message: clsagMessage, sign: signClsag, verify: verifyClsag },
+    // The range proof one transaction carries for ALL of its outputs at once, on
+    // the same footing: a caller can prove a set of amounts or check a proof
+    // against the commitments it claims to be about.
+    rangeProof: { prove: proveBulletproofPlus, verify: verifyBulletproofPlus },
   };
 
   return {

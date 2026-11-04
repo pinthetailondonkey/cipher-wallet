@@ -38,6 +38,7 @@
 
 import { hex } from '@scure/base';
 import { varint } from './keys.js';
+import { writeBulletproofPlus } from './bulletproofs.js';
 
 const HASH_BYTES = 32;
 
@@ -230,15 +231,21 @@ export function bulletproofPlusWidth(outputs) {
 }
 
 export function writeType6Prunable({
-  inputCount, outputCount, ringSize, proofCount = 1, lCount, rCount, pseudoOuts = [], clsags = [],
+  inputCount, outputCount, ringSize, proofCount = 1, lCount, rCount, pseudoOuts = [], clsags = [], proofs = [],
 } = {}) {
   const inputs = count(inputCount, 'input count');
   const outputs = count(outputCount, 'output count');
   const ring = count(ringSize, 'ring size');
-  const proofs = count(proofCount, 'Bulletproof+ count');
   if (outputs < 1) throw new Error('A transaction with no outputs carries no range proof, and this writer writes one.');
-  if (proofs !== 1) {
-    throw new Error(`That transaction would carry ${proofs} Bulletproof+ proof(s) for ${outputs} output(s). Monero aggregates them into exactly one, and expand_transaction_1 refuses any other count.`);
+  // Two shapes: with real proofs the count is theirs (still exactly one), and
+  // without them the section is zero bytes of the right width, so it frames either
+  // way and the difference is visible rather than structural.
+  if (proofs.length > 0 && proofs.length !== 1) {
+    throw new Error(`That transaction would carry ${proofs.length} Bulletproof+ proof(s) for ${outputs} output(s). Monero aggregates them into exactly one, and expand_transaction_1 refuses any other count.`);
+  }
+  const proofs_ = proofs.length === 1 ? 1 : count(proofCount, 'Bulletproof+ count');
+  if (proofs_ !== 1) {
+    throw new Error(`That transaction would carry ${proofs_} Bulletproof+ proof(s) for ${outputs} output(s). Monero aggregates them into exactly one, and expand_transaction_1 refuses any other count.`);
   }
   const width = bulletproofPlusWidth(outputs);
   const lSize = count(lCount ?? width, 'L size');
@@ -250,9 +257,18 @@ export function writeType6Prunable({
     throw new Error('A type 6 prunable section needs at least one input with a ring: a CLSAG has nothing to sign otherwise.');
   }
   const zeros = (n) => new Uint8Array(n);
-  const parts = [varint(BigInt(proofs))];
-  for (let p = 0; p < proofs; p += 1) {
-    parts.push(zeros(32 * 6));                    // A, S, T1, T2, taux, mu
+  const parts = [varint(BigInt(proofs_))];
+  if (proofs.length === 1) {
+    // The real proof, whose L and R widths a verifier derives the output count
+    // from, so a proof of the wrong width is refused rather than misread.
+    const proof = proofs[0];
+    if (proof.L.length !== lSize || proof.R.length !== rSize) {
+      throw new Error(`That Bulletproof+ carries ${proof.L.length}/${proof.R.length} L and R keys for ${outputs} output(s), where the width is ${width}: ${lSize}/${rSize} was written.`);
+    }
+    parts.push(writeBulletproofPlus(proof));
+  }
+  for (let p = 0; proofs.length === 0 && p < proofs_; p += 1) {
+    parts.push(zeros(32 * 6));                    // A, A1, B, r1, s1, d1
     parts.push(varint(BigInt(lSize)), zeros(32 * lSize));
     parts.push(varint(BigInt(rSize)), zeros(32 * rSize));
   }

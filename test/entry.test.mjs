@@ -479,6 +479,23 @@ test('monero.submit rotates off a dead node', async () => {
   assert.equal(verdict.accepted, true);
 });
 
+test('monero.rangeProof proves and verifies through the wallet\'s own door', async () => {
+  const keys = await import('../src/monero/keys.js');
+  const { commitmentOf } = await import('../src/monero/ringct.js');
+  const w = buildWallet({ env: {} });
+  const amounts = [4_000_000_000_000n, 1_000_000n];
+  const masks = [keys.hashToScalar(Uint8Array.from([9])), keys.hashToScalar(Uint8Array.from([10]))];
+  const commitments = amounts.map((amount, i) => commitmentOf({ amount, mask: masks[i] }));
+
+  const proof = w.monero.rangeProof.prove({ amounts, masks });
+  assert.equal(w.monero.rangeProof.verify({ proof, commitments }), null);
+
+  // The proof covers the outputs' commitments, so one more output than amounts
+  // proved is refused rather than stretched.
+  assert.match(w.monero.rangeProof.verify({ proof, commitments: commitments.slice(0, 1) }), /wider than/);
+  assert.match(w.monero.rangeProof.verify({ proof, commitments: [...commitments, commitments[0]] }), /covers 2 outputs/);
+});
+
 test('monero.clsag signs and verifies through the wallet\'s own door', async () => {
   const keys = await import('../src/monero/keys.js');
   const w = buildWallet({ env: {} });

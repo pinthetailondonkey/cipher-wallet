@@ -450,13 +450,18 @@ Bulletproofs aggregate and the writer was writing one proof per output.
 
 ## The pinned verdicts are for a SIGNED transaction
 
-`monero-built-spend.json` was re-pinned after CLSAG landed: the transaction now
-carries a real signature, and the daemon's two sentences are unchanged (read and
-expanded, then failed verification; the truncated control still fails framing).
-That the empty reason did not change is worth a sentence: verification is now
-failing on the zero range proof and on a fabricated ring member, and NOT on the
-signature's structure, because `expand_transaction_1` checks the CLSAG count and
-that the signature's key image equals the prefix's, and it passed both.
+`monero-built-spend.json` was re-pinned twice, once when CLSAG landed and once
+when the Bulletproof+ range proof did. The transaction now carries a real
+signature and a real proof, and the daemon's two sentences are unchanged (read
+and expanded, then failed verification; the truncated control still fails
+framing). That the empty reason did not change is worth a sentence: `tx_sanity_check`
+speaks only about parsing and expanding, so an empty reason never named which
+verification failed, and it still does not. What the pin can say is what the
+daemon did NOT say: it never said "Sanity check failed", so the count checks
+`expand_transaction_1` makes (one aggregated proof, one CLSAG per input, the
+signature's key image equal to the prefix's) all passed. The evidence that the
+proof itself is right is a real mainnet proof verified in
+`test/monero-bulletproofs.test.mjs`, not this sentence.
 
 Also pinned: the six ring members (keys and commitments) and `ringPosition`, so
 the build reproduces offline. The member at `ringPosition` is REPLACED by this
