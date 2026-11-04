@@ -119,10 +119,13 @@ into one whole Monero wallet — its own spend and view keys and a standard
 address — with the derivation frozen and its first three addresses pinned by a
 test. The matching rule for spotting an output that is ours is built
 (`src/monero/scan.js`) and tested against locally built transactions. RingCT
-amounts do **not** yet decrypt: `src/monero/ringct.js` is a sketch on a
-sixteen-byte shape Monero never writes (proofs in
-`state/FINDING-F1-ringct-amount.md`), and its vectors pin keccak and the varint
-rather than the encoding, so nothing may gate a payment on it.
+amount decoding is now built per type and refuses rather than guesses — the
+earlier sixteen-byte sketch is gone. `src/monero/ringct.js` follows upstream
+`ecdhDecode` (`sc_reduce32`, the `"amount"` domain tag, the derived mask) and
+re-builds the commitment as a third witness; the proofs are in
+`state/FINDING-F1-ringct-amount.md`. Decoding a real owned amount needs a view
+secret external to this repo, so its success path is witnessed by a synthetic
+block rather than a mainnet fixture.
 
 **The block reader was withdrawn after review, and the withdrawal was the
 feature.** `src/monero/nodeClient.js` fetches a block from one pinned node and
@@ -134,8 +137,10 @@ written by the same hand. The body is
 `header || miner_tx || varint(count) || 32-byte hash × count`, not a list of
 full transactions; and a version 2 transaction id is
 `cn_fast_hash(prefix_hash || base_rct_hash || prunable_hash)`, not a hash of the
-prefix alone. Every real miner transaction is version 2, so the old reader would
-have emitted confident, wrong identities. A wrong identity is worse than none,
+prefix alone. Version 2 is what modern miner transactions are (early blocks carry
+version 1, pinned in `monero-block-v1-early.json`), so a v2 id read from the
+prefix alone is wrong, and the old reader would have emitted confident, wrong
+identities. A wrong identity is worse than none,
 so the door refused, there was no flag that opened it, and the tests assert that
 the old fictional shape is still refused — a fixture written here may not stand
 in for a real sample.
@@ -148,9 +153,10 @@ must equal the root the block carries. A block whose bytes and list disagree is
 refused by name. A walk that leaves a byte over is a framing lie and refused.
 The live path runs that whole chain over Tor against a real node.
 
-What is still not built: the scan wired to a block walk, and anything that
-spends or broadcasts. Nothing on the Monero side has been funded or touched
-mainnet.
+What is still not built on the Monero side: building and broadcasting a spend.
+The read scan IS wired to the block walk — `ownOutputsInBlock` walks a proven
+block and reads our outputs — and `scanBlockFromNode` is the node driver over
+it. Nothing on the Monero side has been funded or touched mainnet.
 
 The transport for reading blocks is ruled: a shipped list of public nodes in
 `src/monero/nodes.js`, with a private node overriding the list when
@@ -200,7 +206,8 @@ http only on this machine, a per-payment child token, and a signed, fresh
 answer that echoes the ask.
 
 Storage is a small key/value interface: IndexedDB in the app, a memory adapter
-in tests (the IDB adapter itself is exercised by the UI layer).
+in tests. The IDB adapter itself has no caller and no test yet (there is no UI
+directory), so it is the one storage door this repo does not yet walk.
 
 ## The spend path
 
