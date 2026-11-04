@@ -1053,3 +1053,28 @@ dropping the guard -> 22 pass / 1 FAIL), `keys.numberToBytesLE` "does not fit", 
 
 One word: the parts now meet, a single peer no longer decides the answer alone, and
 it still says exactly which chain questions it has not answered.
+
+## 2026-11-04 — defect 1, the last residual: a chain is priced by its total work (lane A, coordinator)
+
+Base: e0ab0f7. Commit 47e1157. The per-header work check left the real hole the
+previous section named: a peer chooses every header's nBits, so a peer can set an
+easy target on each block and invent a self-consistent low-work chain for free.
+
+FIX (VERIFIED by re-execution): `workForTarget(target)` = `2^256/(target+1)`;
+`workOf(header)` and `cumulativeWork(headers)` sum it. `walkBack` and
+`walkHeadersForward` accumulate total work, hang it on the returned array as a
+non-enumerable `work`, and take an optional `minWork` floor that refuses a chain
+priced below it by name. `scanBack` forwards `minWork` and returns `work`.
+
+Own re-run: `npm test` 712/712, build 35 modules, lint 0 errors. A cheap chain is
+refused by a `minWork` one above its total and accepted at or below; a harder
+earlier target strictly raises the total; the array still deepStrictEqual-equals
+its entries (the non-enumerable `work` does not leak).
+
+### Verdict and the remaining hole
+
+- cumulative work + floor: **VERIFIED**.
+- Still unverified: FORK CHOICE. Two chains that both clear the floor are both
+  accepted; nothing accumulates work across competing tips and picks the heavier.
+  A caller can now supply the floor by hand (a checkpoint's cumulative work), so
+  this is a decision left to the founder rather than an unchecked inference.
