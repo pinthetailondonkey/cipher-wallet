@@ -824,3 +824,40 @@ bytes, a permuted claim, a longer claim, and reversed fetched bytes all refuse. 
 - 10d75b4: B FIXED (residual: options.expectHash ignored), D FIXED (residual: stub missed_tx always
   present, hash vs tx_hash), E FIXED (residual: stale test-file comment). No new correctness defect;
   gate 660/660, build 33, lint 0e 15w, live height scan reproduced.
+
+## APPENDED 2026-11-04T05:0xZ, lane A — re-adjudication of the three 10d75b4 residuals, at HEAD (28b713e → 7355f70)
+
+Scope: ONLY the three residuals in my last section. Checked by execution, not by reading alone.
+
+1. **options.expectHash ignored — FIXED, verified by probe.**
+   `scanBlockFromNode` now takes `expectHash` as a named parameter, strips/lowercases it, refuses
+   non-64-hex, and passes it into `ownOutputsInBlock` as the anchor. Probe against the stub:
+   - height + correct expectHash -> RESOLVED, `anchored:true`, `expectHash` echoes the id;
+   - height + wrong expectHash -> REFUSED ("That block proves the id …");
+   - hash request -> RESOLVED, `anchored:true` (the asked hash is the anchor);
+   - expectHash 'zz' -> REFUSED ("A block anchor is 64 hex characters.").
+   The header's "unless the caller passes `expectHash`" is now reachable.
+   Nit (not a residual): the doc string reads "It is not accepted together with `hash`", but a hash
+   request that ALSO carries expectHash is accepted, hash winning (probe: hash+wrong expectHash ->
+   RESOLVED, expectHash = asked hash). Behavior is fine; the phrase "not accepted" reads as "refused".
+
+2. **Stub shape — FIXED, verified against a fresh live daemon.**
+   The stub now names the per-tx field `tx_hash` and OMITS `missed_tx` when empty, sending it only
+   when a hash is unheld. A live `get_transactions` on xmr-node.cakewallet.com over Tor returned
+   top keys `[credits,status,top_hash,txs,txs_as_hex,untrusted]` with `missed_tx` ABSENT, per-tx keys
+   including `tx_hash`; with one bogus hash it returned `missed_tx:[…]`. The stub now matches both
+   halves. (The pinned reconstruction fixture carries `missed_tx: []`, so the stub is now MORE
+   like the live daemon than the fixture, not less.)
+
+3. **Stale test wording — FIXED.**
+   `test/scan-from-node.test.mjs` header item 3 now says a height scan is UNANCHORED unless the
+   caller passes `expectHash`, and the title is renamed "a height scan is self-consistent only, and
+   says so". Src header and test header now agree.
+
+**Verdict: my previous three RESIDUALS are STALE — all three are closed.** The 10d75b4 line in the
+section above should be read as: B FIXED, D FIXED, E FIXED, no open residual. No new correctness
+defect found. New test coverage runs: the anchored test now exercises height+expectHash accept and
+height+wrong expectHash refuse directly.
+
+Gate re-run at HEAD: build 33, tests 660/660, lint 0 errors / 15 warnings, live get_block +
+get_transactions reproduced over Tor (height 3796965).
