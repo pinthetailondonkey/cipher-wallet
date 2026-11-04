@@ -861,3 +861,116 @@ height+wrong expectHash refuse directly.
 
 Gate re-run at HEAD: build 33, tests 660/660, lint 0 errors / 15 warnings, live get_block +
 get_transactions reproduced over Tor (height 3796965).
+
+## 2026-11-04 — full-app adjudication, four lane-A auditors (lane A, independent)
+
+Adjudicator: lane A. HEAD 95e8d03, tree clean. Every FALSE below re-derived by execution,
+never read from the finding. Environment gate re-run first, unmodified:
+
+    npm test        -> 1..660, tests 660, pass 660, fail 0 (28.7s)
+    npm run build   -> build: 33 modules resolved
+    npm run lint    -> 0 errors, 15 warnings
+
+VERIFIED — the gate reproduces the auditor baselines (A4 reported 660/0; matches).
+
+### 1. Every FALSE, re-derived
+
+**A1 FALSE — concurrent `receive.issue()` reuses one pocket/address. VERIFIED exactly.**
+Root cause confirmed by reading, not by the finding: `receive.issue` reads the handle with
+`await store.getHandle()`, which is NOT a `serialized()` write (`pocketStore.js:143`, versus
+`issue`/`record` at :154/:198). Two issues in one turn both read the same handle, both call
+`issuePocket` -> same index/address; the second `store.issue` finds the row and only rewrites the
+same handle. Own probe (5ms-latency kv):
+`issue A -> 0 bc1qaguf…7486 / issue B -> 0 bc1qaguf…7486`, `rows [0]`; first record txid AAAA, second
+`REFUSED: This pocket already names a different transaction.` Claim holds as written. A1's crash
+half (retry reuses the index, no gap) not re-challenged.
+
+**A2 FALSE 1 — "two independent peers agree" is unwired from every live scan path. VERIFIED.**
+`grep -rn 'agreedFilter|verifiedFilter' src/` returns only the two definitions in `peers.js`; every
+caller is under `test/`. The live scan `scanBack` takes a single `fetchFilter` and a single `peer`
+(`blockScan.js:78,89,96`) and never consults a pool. Own probe: one pool entry behind two names
+(`node-a.onion`/`node-b.onion`) -> `agreed peers 2 | server hits 2`; the same peer object passed
+twice -> `agreed 2`. Two pool entries can be one operator and still satisfy the quorum.
+
+**A2 FALSE 2 — one peer invents a payment on a never-mined chain. VERIFIED.**
+Own probe built two blocks with arbitrary header bytes (nBits left 0xf1…), self-consistent merkle,
+paying our script, served by ONE peer; `scanBack` returned
+`payments 2, amounts [123456789, 123456789], scanned 2`. No work check, no second peer: a single
+peer can also hide one by not serving its block. Claim holds. (A2's file carries one explicit FALSE
+heading; the two facts above are the two FALSEs the task names.)
+
+**A3 FALSE — `hashToScalar` silently eats a hex string. VERIFIED exact.**
+`new Uint8Array('aabb')` is length 0 (typed-array ToIndex, not char iteration). Own run:
+`hashToScalar('aabb') = 4a078e76…5d85a400` vs bytes `= eae48a42…c740080c`, `equal false`; the
+return is a canonical, plausible, wrong scalar. No in-repo caller passes a string, so latent. Note
+the fallback `new Uint8Array(data ?? [])` also silently accepts any array-like; the claim's "hex
+string" is the reachable case and is exact.
+
+**A4 F-1..F-4 — four README sentences the code does not support. VERIFIED exact.**
+- F-1 `README:123-125` "amounts do not yet decrypt … a sketch on a sixteen-byte shape Monero never
+  writes": `ringct.js:13` "There is no type that writes sixteen bytes", `decodeAmount` follows
+  `ecdhDecode` per type 1-6 and returns `{value,mask}`, reachable from `ownOutputs.js`. The README's
+  own newer section (`:24-25`) says decoding "is built per type". Stale, false.
+- F-2 `README:151` "still not built: the scan wired to a block walk": `ownOutputsInBlock` calls
+  `walkBlockTxs` then `scanOne` (`ownOutputs.js:74,82,146,153`); `scanFromNode` wires the node.
+- F-3 `README:137` "Every real miner transaction is version 2": own parse of the pinned mainnet
+  fixture `monero-block-v1-early.json` gives `header.major 1, minerTx.version 1, coinbase true`.
+- F-4 `README:203` "the IDB adapter itself is exercised by the UI layer": no UI dir; `grep -rn
+  indexedDbKv src test` returns ONLY the definition (`pocketStore.js:30`). Nothing here exercises it.
+All four hold; the three OVERCLAIMs (merging built, Tor conditional, root re-proof independence) were
+spot-checked and are fair: `spend.js:86,93` hard-code one input; `scan-live.mjs` adds
+`--socks5-hostname` only when `CIPHER_TOR_SOCKS`/`--tor` is set.
+
+### 2. The three "unwatched guard" mutations, re-broken at HEAD
+
+Each break applied, full `node --test test/` run, restored:
+- `ringct.js` `commitmentOf` zero branches: forcing `amount === 0n` false -> 660 pass / 0 fail;
+  forcing `maskScalar === 0n` false -> 660 pass / 0 fail; both -> green. UNWATCHED, confirmed.
+- `keys.js` `viewSecretFromSpend` length guard loosened (`length !== 32` dropped) -> 660/0. UNWATCHED.
+- `keys.js` `numberToBytesLE` "does not fit" throw removed -> 660/0. UNWATCHED.
+Three guards that cannot fail as written: A4's item 7 reproduces, with one count note (A4 cited
+"19 pass" on one file; 22 on that file plus ecdh-pin here). The unwatched set does not grow.
+
+### 3. What no lane owned — the app as an app
+
+- **No entry point.** No `src/index.js`, no `package.json` `main`/`exports`/`bin`. Nothing imports
+  the product as a unit.
+- **The two halves are DISJOINT.** `grep -rn "from './monero" src/` returns nothing. The only
+  cross-edge is one way: `src/monero/pocket.js` imports `../root.js`. No Bitcoin-side file imports
+  `src/monero`; `moneroPocket` is called only from tests and `scripts/scan-live.mjs`. So the btc
+  receive/spend/scan path and the monero read path have never been assembled into one runtime.
+- **Reachability from anything a user can run** (scripts are the only runnable doors): of 33 `src`
+  modules, 13 are reachable from `scripts/`, and **20 are reachable ONLY from tests**:
+  `address, blockScan, chain, deviceEnvelope, filters, merkle, monero/rootVerify, payHandle,
+  paymentState, peerClient, peers, pocketStore, psbt, receive, spend, tx, units, vault, watcher,
+  wire`. That is the entire Bitcoin side bar `root.js`, plus `monero/rootVerify.js`.
+- **README opening** (`:6` "Phases 0 to 2 complete, and Phase 3 part-built") reads as a product.
+  Against the code it is a crate of well-tested parts: no entry, halves unjoined, 20/33 modules
+  test-only. "Complete" overstates an assembled wallet; the honest unit is "module", not "app".
+- **Load-bearing behaviour with no test at all** (not just unwatched guards): `indexedDbKv` has no
+  test and no caller — the one storage adapter the real app would use is unexercised. `receive.scanAll`
+  has no caller and no test. No test imports both `spend.js` and `receive.js` (no end-to-end btc
+  issue -> watcher -> spend -> broadcast join). `verifyTreeRoot` and `decodeMatchedAmounts` are
+  exported with no `src/` caller (A4 item 2, re-confirmed).
+
+### Verdicts stamped
+
+- **A1 — CONFIRMED.** The 1 FALSE is exact; 5 PARTIAL fair; no overstated FALSE. A1 is credible.
+- **A2 — CONFIRMED.** Both FALSE exact (unwired quorum; single-peer invention). No overstatement:
+  the file correctly scopes them ("FALSE as applied to the product").
+- **A3 — CONFIRMED.** The 1 FALSE is exact and correctly called latent; the zero-secret PARTIAL is
+  fair. No overstated FALSE.
+- **A4 — CONFIRMED.** All 4 FALSE and 3 OVERCLAIM hold; item 7's three unwatched mutations reproduce.
+- **Structural miss (all four lanes): the app is unassembled and half-test-only.** Each lane audited
+  its scope correctly; none owned that the scopes never meet.
+
+### The founder's sentence
+
+This is a well-tested library of parts, not yet a wallet: nothing runs them together and the two
+halves never meet. Ordered by real-world blast radius, fix first: (1) a single peer can make the
+wallet believe a payment it never received, and hide one it did, because the quorum is unwired, work
+is unverified and the tip is peer-supplied (silent wrong answer -> shipped goods); (2) concurrent
+`receive.issue()` shares one address and makes the second payment unrecordable (privacy link + a
+refused record); (3) the unassembled app and 20 test-only modules (no door a user can walk through);
+(4) four false README sentences; (5) the latent `hashToScalar` hex defect; (6) three guards no test
+watches.
