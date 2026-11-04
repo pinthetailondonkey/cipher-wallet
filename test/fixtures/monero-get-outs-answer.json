@@ -1,0 +1,103 @@
+{
+ "source": {
+  "what": "One real monerod /get_outs answer, captured live by scripts/pin-outs.mjs through the wallet's own door.",
+  "node": "nodes.hashvault.pro:18081",
+  "nettype": "mainnet",
+  "captureMethod": "POST /get_outs { outputs: [{amount: 0, index}], get_txid: true } over clearnet from the machine that ran the script",
+  "capturedAt": "2026-11-04T14:47:16.019Z",
+  "requestedFrom": "monero-tx-rct-5.json",
+  "requestedIndices": [
+   26691977,
+   27163293,
+   27307383
+  ],
+  "note": "The indices are the ABSOLUTE ring positions of a real mainnet input, converted from that input's own relative key_offsets. The keys and masks are the node's claims about outputs at those positions; nothing in this repository proves them against a block, because a ring member is in no transaction.",
+  "verificationNote": "Each answer was checked against the chain in the same run: the block at the named height was fetched and parsed, the named transaction was proven to be in that block's own hash list, and the key was found among that transaction's own outputs. The block and transaction BYTES behind those facts are not pinned here, so a replay asserts the recorded conclusions and re-deriving them means re-running this script.",
+  "rederive": "node scripts/pin-outs.mjs --tx monero-tx-rct-5.json --count 3 --out test/fixtures/monero-get-outs-answer.json"
+ },
+ "request": {
+  "outputs": [
+   {
+    "amount": 0,
+    "index": 26691977
+   },
+   {
+    "amount": 0,
+    "index": 27163293
+   },
+   {
+    "amount": 0,
+    "index": 27307383
+   }
+  ],
+  "get_txid": true
+ },
+ "response": {
+  "status": "OK",
+  "outs": [
+   {
+    "amount": 0,
+    "index": 26691977,
+    "key": "7fb8f94cbb67beab7815959ea2bdc253b669fe7c7b5002c7cdc1fd178d6955c3",
+    "mask": "150f5cf45a5a4bdb3baf7f6eb688c787377ba6684bba51cc85a7b3e05247ef6e",
+    "height": 2287960,
+    "unlocked": true,
+    "txid": "bb76c151d02971bf5c041ac78dcc8d5a91c0f3c159f421fd14aa329fcd7a57d5"
+   },
+   {
+    "amount": 0,
+    "index": 27163293,
+    "key": "d7861d5a5f52a9e868d71e97bdc3ad1b4180a2cccfb1e8580c214aae13931ba5",
+    "mask": "961b19dc114d02be52fd55dee6a6b9bf7258810e36ba0d0a1b36ffc5571f8832",
+    "height": 2295052,
+    "unlocked": true,
+    "txid": "6ba5d5ff6a3c01ea30d256f447208ffeb9c5166c9a4faa695a8c9516f37cef3b"
+   },
+   {
+    "amount": 0,
+    "index": 27307383,
+    "key": "bd6418092801b30d81a0316d811ce7702000a22edfa18e056ba4f06e71110059",
+    "mask": "d4534ddc3a7dfe81b4dd7edd7a5ff66746a9a0f978a43144fa5d8a546ec5dd23",
+    "height": 2297171,
+    "unlocked": true,
+    "txid": "40c23bfbd2759077e3e9efd4c866e6ea37085c7cc5caeb9a16d6778d7f4ba153"
+   }
+  ],
+  "untrusted": false
+ },
+ "verification": [
+  {
+   "index": 26691977,
+   "txid": "bb76c151d02971bf5c041ac78dcc8d5a91c0f3c159f421fd14aa329fcd7a57d5",
+   "blockHeight": 2287960,
+   "blockId": "bc3a9f4bd1cb6f783d9c0eae829d959046971f4cc2f79b2183511ee0e6fe016b",
+   "txInBlock": true,
+   "keyFoundAtOutput": 1,
+   "txVersion": 2,
+   "rctType": 5,
+   "blockTxCount": 74
+  },
+  {
+   "index": 27163293,
+   "txid": "6ba5d5ff6a3c01ea30d256f447208ffeb9c5166c9a4faa695a8c9516f37cef3b",
+   "blockHeight": 2295052,
+   "blockId": "79a705f32097647b18d115af1d6a6571a6665c87c0c20c356f0a58d14ce19025",
+   "txInBlock": true,
+   "keyFoundAtOutput": 1,
+   "txVersion": 2,
+   "rctType": 5,
+   "blockTxCount": 64
+  },
+  {
+   "index": 27307383,
+   "txid": "40c23bfbd2759077e3e9efd4c866e6ea37085c7cc5caeb9a16d6778d7f4ba153",
+   "blockHeight": 2297171,
+   "blockId": "acf7fc8deb86115ef371da587858a9f75f4fe43c0910a96f1a5b3ffe65117dac",
+   "txInBlock": true,
+   "keyFoundAtOutput": 0,
+   "txVersion": 2,
+   "rctType": 5,
+   "blockTxCount": 1
+  }
+ ]
+}

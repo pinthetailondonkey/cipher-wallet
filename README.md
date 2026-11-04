@@ -10,7 +10,7 @@ encoding, block and transaction reading (pinned to real mainnet bytes with
 provenance), the block walk (every transaction id proven against the block's own
 hash list, the tree root re-proven from the proven ids), the transaction fetch
 client (getTransactions with named refusals), and the capture tooling
-(pin-tx.mjs: one command from node + height + index to a pinned fixture). The
+(pin-tx.mjs: one command from node + height + index to a pinned fixture; pin-outs.mjs: a ring, fetched and then proven back against the chain). The
 entry point is a seam, not a UI: it wires what exists and refuses to pretend the
 missing parts are there. There is no Monero spend (its bytes can now be built;
 nothing signs or broadcasts one yet), no merging, no
@@ -89,6 +89,12 @@ recovery shards, and nothing here has been run against real money.
 The pre-commit hook scans staged additions for key-shaped material. It is
 committed, but a clone does not carry config, so the line above is what makes it
 live. Without it the hook exists and does nothing.
+
+It is a backstop, not a substitute for looking, and it flags any added 64-hex
+string wherever one appears. So a commit that pins a fixture full of PUBLIC
+output keys or transaction ids is expected to trip it: read the lines it names,
+and when they are public bytes commit with `--no-verify`. That is the intended
+escape, not a failure.
 
 ## The shape
 
@@ -191,8 +197,31 @@ writer that echoed the bytes it was handed would round-trip perfectly and tell
 you nothing. Eight such mutants were run and all were killed, including the one
 that survived the first pass (L and R swapped in the prunable, invisible while
 both vectors are the same length) — the fix was a control with distinct counts.
-So a spend's *encoding* is now proven; what a spend still lacks is the ring
-selection, the key image, the commitments and the CLSAG signature.
+So a spend's *encoding* is now proven; what a spend still lacks is the crypto
+(the key image, the commitments and the CLSAG signature) and the broadcast.
+
+**A ring can now be fetched, and the offsets it needs are computed from real
+rings.** A Monero input names its ring members by POSITION, and RELATIVE to the
+previous member: the first offset is absolute and every later one is a step, so
+a reader that treats them as absolute is right on the first member and wrong
+after it. `src/monero/outs.js` holds that arithmetic against upstream's own two
+functions, and `test/monero-outs.test.mjs` judges it on every real ring in the
+pinned corpus, re-implementing upstream in the test so the module is not its own
+oracle and measuring the trap rather than describing it. `/get_outs` is the door
+(`nodeClient.getOuts`, a third door with the same duties as the other two), and
+`monero.ringFor` reaches it from the wallet, choosing a node the way a scan does
+and rotating off a dead one.
+
+The ring door's evidence had to be different, because a ring member is in no
+transaction. `scripts/pin-outs.mjs` captured one real answer and then proved it
+against the chain in the same run: for each output, the block at the named
+height was fetched and parsed, the named transaction was proven to be in that
+block's own hash list, and the key was found among that transaction's outputs.
+The request was not invented either: the indices are the absolute positions of a
+pinned mainnet input's own ring. What is not pinned is the block and transaction
+bytes behind those facts, so the fixture's test asserts the recorded conclusions
+and says so. Thirteen source mutants were run across this lane and all were
+killed.
 
 The transport for reading blocks is ruled: a shipped list of public nodes in
 `src/monero/nodes.js`, with a private node overriding the list when

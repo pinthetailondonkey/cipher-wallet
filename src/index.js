@@ -30,9 +30,10 @@
 //   - A Bitcoin scan payment is likewise returned, not persisted: the watcher
 //     is the only thing allowed to move a payment, and that separation is kept.
 //   - There is no Monero spend. The format can be WRITTEN now (`monero.tx`
-//     re-encodes a transaction's prefix, base and type 6 prunable), but nothing
-//     here picks a ring, computes a key image, builds a commitment or signs a
-//     CLSAG, and nothing broadcasts.
+//     re-encodes a transaction's prefix, base and type 6 prunable) and a ring
+//     can be FETCHED and turned into offsets (`monero.ringFor`), but nothing
+//     here computes a key image from a fetched output, builds a commitment,
+//     signs a CLSAG, or broadcasts.
 //
 // The factory uses every module's PUBLIC signature only, so lanes editing
 // receive.js / blockScan.js internals do not touch this file.
@@ -54,8 +55,10 @@ import { ownOutputsInBlock } from './monero/ownOutputs.js';
 import {
   writeTransactionPrefix, writeRctBase, writeType6Prunable, writeTransaction,
 } from './monero/txWriter.js';
+import { offsetsToAbsolute, absoluteToOffsets, ringFromOuts } from './monero/outs.js';
 import { createHandle, nextIndexFor } from './payHandle.js';
 import { nodeSourceFromEnv } from './monero/nodes.js';
+import { getOuts } from './monero/nodeClient.js';
 
 const DEFAULT_BTC_NETWORK = 'bc';
 
@@ -375,6 +378,34 @@ export function createWallet({
     // what a read parsed, and a from-scratch framing of the sections a spend
     // needs. Both are pure byte work: no keys, no node, no signing.
     tx: { writeTransactionPrefix, writeRctBase, writeType6Prunable, writeTransaction },
+
+    // A ring for one of our outputs, and the arithmetic around it. This is the
+    // step a spend needs before it can write anything: the input's offsets and
+    // the members a signature signs against. The node is chosen the same way a
+    // scan chooses one (sticky, rotated on failure), so a ring never stitches
+    // two operators' answers together.
+    //
+    // `indices` are ABSOLUTE positions in the amount-0 output list, `ours` is
+    // the one of those that is really ours. The answer is the ring ordered by
+    // index, the offsets to write into the input, and our position in it.
+    async ringFor({ indices, ours, amount = 0n, getTxid = false, node: suppliedNode, ...options } = {}) {
+      if (!Array.isArray(indices) || indices.length === 0) {
+        throw new Error('ringFor needs the absolute indices of the ring to fetch.');
+      }
+      const chosen = suppliedNode ? String(suppliedNode).trim().toLowerCase() : resolveNode();
+      let answer;
+      try {
+        answer = await getOuts(chosen, { outputs: indices.map((index) => ({ amount, index })), getTxid }, {
+          pool: moneroPool, fetchImpl, ...options,
+        });
+      } catch (error) {
+        if (!suppliedNode) nodeFailed(chosen);
+        throw error;
+      }
+      const built = ringFromOuts({ outs: answer.outs, ours });
+      return { ...built, node: answer.address, untrusted: answer.untrusted };
+    },
+    ring: { offsetsToAbsolute, absoluteToOffsets, ringFromOuts },
   };
 
   return {

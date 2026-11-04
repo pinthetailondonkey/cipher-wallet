@@ -403,3 +403,24 @@ not a chain search. Do not read this fixture as pinning anything beyond that.
 The type numbering is the `rctTypes.h` enum at the pinned commit, where 3 is
 Bulletproof and 6 is BulletproofPlus, so 4 and 5 are Bulletproof2 and CLSAG and
 not "more Bulletproof".
+
+## monero-get-outs-answer.json — one live /get_outs answer, verified against the chain
+
+The ring door's only witness. A ring member is in no transaction (a transaction
+names its ring by POSITION, not by key), so unlike every other fixture here
+these keys cannot be proven by re-parsing bytes the wallet holds. What the
+capture does instead is prove them against the chain in the same run:
+`scripts/pin-outs.mjs` asked for the absolute positions of a real input's ring,
+then for EACH answer fetched the block at the height the node named, parsed it,
+proved the named transaction is in that block's own hash list, fetched that
+transaction, and found the key among its outputs.
+
+The request is not invented: the indices are the absolute positions of
+`monero-tx-rct-5.json`'s own input, so the offsets the wallet computes for a real
+ring are what a node was actually asked about. Heights came back older than that
+transaction's block, which is what a ring of decoys must be.
+
+What is NOT pinned: the block and transaction bytes behind the recorded
+verification, so the test asserts the recorded conclusions rather than
+re-deriving them. Re-deriving means re-running the script, which needs a node.
+Provenance, node and re-derive recipe are in the fixture's `source`.

@@ -317,3 +317,79 @@ test('monero.tx re-encodes a real transaction through the wallet, and reads fiel
   const scratch = w.monero.tx.writeType6Prunable({ inputCount: 1, outputCount: 1, ringSize: 3 });
   assert.equal(scratch.length, 1 + 32 * 6 + 1 + 32 * 6 + 1 + 32 * 6 + (32 * 3 + 32 + 32) + 32);
 });
+
+test('monero.ringFor fetches a ring off the shipped list and returns offsets, not just keys', async () => {
+  const answer = read('monero-get-outs-answer.json');
+  const indices = answer.response.outs.map((o) => o.index);
+  const ours = indices[1];
+  const seen = [];
+
+  const w = buildWallet({ env: {} });
+  const out = await w.monero.ringFor({
+    indices, ours,
+    fetchImpl: async (url, init) => {
+      seen.push({ url, body: JSON.parse(init.body) });
+      return {
+        ok: true,
+        status: 200,
+        url,
+        text: async () => JSON.stringify({
+          status: 'OK',
+          outs: answer.response.outs.map((o) => ({ key: o.key, mask: o.mask, height: o.height, unlocked: o.unlocked })),
+          untrusted: false,
+        }),
+      };
+    },
+  });
+
+  assert.match(seen[0].url, /cakewallet/, 'the shipped list chose the node');
+  assert.deepEqual(seen[0].body.outputs.map((o) => o.index), indices, 'the indices are asked for in order, as amount 0');
+  assert.deepEqual(out.ring.map((r) => Number(r.index)), indices);
+  assert.deepEqual(out.offsets, [BigInt(indices[0]), BigInt(indices[1] - indices[0]), BigInt(indices[2] - indices[1])],
+    'the offsets are relative, with only the first absolute');
+  assert.equal(out.position, 1, 'our own member is located, not assumed');
+  assert.equal(out.node, answer.source.node.replace(/^.*$/, out.node), 'the node that answered is named back');
+});
+
+test('monero.ringFor rotates off a dead node and refuses nothing on the second try', async () => {
+  const answer = read('monero-get-outs-answer.json');
+  const indices = answer.response.outs.map((o) => o.index);
+  const seen = [];
+  const w = buildWallet({ env: {} });
+  const fetchImpl = async (url) => {
+    seen.push(url);
+    if (url.includes('cakewallet')) throw new Error('ECONNREFUSED');
+    return {
+      ok: true,
+      status: 200,
+      url,
+      text: async () => JSON.stringify({
+        status: 'OK',
+        outs: answer.response.outs.map((o) => ({ key: o.key, mask: o.mask, height: o.height, unlocked: o.unlocked })),
+      }),
+    };
+  };
+
+  await assert.rejects(w.monero.ringFor({ indices, fetchImpl }), /ECONNREFUSED|cakewallet/);
+  const out = await w.monero.ringFor({ indices, fetchImpl });
+  assert.match(seen[0], /cakewallet/, 'the first try used the first row');
+  assert.match(seen.at(-1), /hashvault/, 'the next try moved off the dead node');
+  assert.equal(out.ring.length, indices.length);
+});
+
+test('monero.ringFor refuses a ring that does not hold our own output', async () => {
+  const answer = read('monero-get-outs-answer.json');
+  const indices = answer.response.outs.map((o) => o.index);
+  const w = buildWallet({ env: {} });
+  const fetchImpl = async (url) => ({
+    ok: true,
+    status: 200,
+    url,
+    text: async () => JSON.stringify({
+      status: 'OK',
+      outs: answer.response.outs.map((o) => ({ key: o.key, mask: o.mask, height: o.height, unlocked: o.unlocked })),
+    }),
+  });
+  await assert.rejects(w.monero.ringFor({ indices, ours: 123456, fetchImpl }), /does not contain our own output/);
+  await assert.rejects(w.monero.ringFor({ indices: [], fetchImpl }), /absolute indices/);
+});

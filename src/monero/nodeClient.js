@@ -447,3 +447,127 @@ export async function getTransactions(node, hashes, { pool = null, env, ...optio
     if (timer) clearTimeout(timer);
   }
 }
+
+// The decoy door. A block names transactions by hash and a transaction names
+// its ring by OFFSETS; the ring's own members (a one-time key and a commitment
+// per member) are in no transaction at all, so a spender has to ask for them.
+// /get_outs is that door, and like the other two it answers with the node's
+// claims about outputs the wallet will later have to sign against.
+//
+// Duties this door owes, in the same voice as getBlock:
+//   - every request entry is `{ amount, index }`, both whole and not negative:
+//     `amount` is 0 for every RingCT output (the amount lives in the ecdh
+//     entry, not in the index key), and `index` is the output's position in
+//     that amount's own global list, which is exactly what a transaction's
+//     key_offsets are relative to
+//   - the answer carries one entry per request, IN REQUEST ORDER: as with
+//     getTransactions, the caller's list is the law of the mapping
+//   - status must be OK, and every entry must carry a 64-hex key and a 64-hex
+//     mask. A key is what a signature signs; a junk key is not a finding
+//   - `untrusted` is recorded, not read. It is the daemon saying its own copy
+//     is behind or freshly synced, which is a claim about its state, not about
+//     these bytes.
+export async function getOuts(node, { outputs, getTxid = false } = {}, { pool = null, env, ...options } = {}) {
+  if (!Array.isArray(outputs) || outputs.length === 0) {
+    throw new Error('An output fetch asks for at least one { amount, index } entry.');
+  }
+  const asked = outputs.map((entry, i) => {
+    const amount = entry?.amount === undefined ? 0n : entry.amount;
+    const index = entry?.index;
+    for (const [what, value] of [['amount', amount], ['index', index]]) {
+      let n;
+      try { n = BigInt(value); } catch { throw new Error(`That request entry ${i} has a ${what} that is not a whole number: ${String(value)}.`); }
+      if (n < 0n) throw new Error(`That request entry ${i} has a negative ${what}: ${n}.`);
+    }
+    return { amount: BigInt(amount), index: BigInt(index) };
+  });
+
+  const address = cleanNode(node);
+  // Before the socket, exactly as the other two doors do. The query carries
+  // which outputs a wallet is interested in, so a node that was already
+  // abandoned must not receive it.
+  const pinned = poolFor(pool, address, env);
+  pinned.assertCurrent(address);
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  if (typeof fetchImpl !== 'function') throw new Error('A node call needs a way to fetch.');
+
+  const controller = options.timeoutSignal ? null : new AbortController();
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 10000;
+  let timedOut = false;
+  const timer = controller ? setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs) : null;
+  const noAnswer = (error) => (timedOut
+    ? new Error(`The Monero node ${address} did not answer within ${timeoutMs} ms. A silent node is a failed read, not a finding about any output.`)
+    : new Error(`The Monero node ${address} did not answer: ${error?.message || 'no answer'}. This is a failed read, not a finding about any output.`));
+
+  try {
+    let response;
+    try {
+      response = await fetchImpl(`http://${address}/get_outs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          outputs: asked.map((e) => ({ amount: Number(e.amount), index: Number(e.index) })),
+          get_txid: getTxid === true,
+        }),
+        redirect: 'error',
+        signal: options.timeoutSignal ?? controller.signal,
+      });
+    } catch (error) {
+      pinned.abandon(address);
+      throw noAnswer(error);
+    }
+    if (!response || typeof response.text !== 'function') {
+      throw new Error(`The Monero node ${address} answered with something that is not a response.`);
+    }
+    if (response.url && !sameHost(address, response.url)) {
+      throw new Error(`The Monero node ${address} sent this request to another host. That is a different server, so nothing it says is used.`);
+    }
+    if (!response.ok) {
+      throw new Error(`The Monero node ${address} refused the output read with status ${response.status}.`);
+    }
+    let body;
+    try {
+      body = JSON.parse(await response.text());
+    } catch {
+      throw new Error(`The Monero node ${address} answered with something that is not JSON. This is a failed read, not a finding about any output.`);
+    }
+    if (body.status && body.status !== 'OK') {
+      throw new Error(`The Monero node ${address} said ${String(body.status).slice(0, 60)} instead of OK.`);
+    }
+    const outs = Array.isArray(body.outs) ? body.outs : null;
+    if (outs === null) {
+      throw new Error(`The Monero node ${address} answered without an outs list. A ring cannot be built from nothing, and an empty ring must be told apart from a missing one.`);
+    }
+    if (outs.length !== asked.length) {
+      throw new Error(
+        `the count and the list do not agree: ${asked.length} output(s) asked, ${outs.length} answered by ${address}`,
+      );
+    }
+    const parsed = [];
+    for (let i = 0; i < outs.length; i += 1) {
+      const key = String(outs[i]?.key ?? '').trim().toLowerCase();
+      const mask = String(outs[i]?.mask ?? '').trim().toLowerCase();
+      if (!HEX64.test(key)) {
+        throw new Error(`The Monero node ${address} answered output ${i} with a key that is not 64 hex: ${key.slice(0, 70)}.`);
+      }
+      if (mask !== '' && !HEX64.test(mask)) {
+        throw new Error(`The Monero node ${address} answered output ${i} with a mask that is not 64 hex: ${mask.slice(0, 70)}.`);
+      }
+      const height = outs[i]?.height;
+      parsed.push({
+        amount: asked[i].amount,
+        index: asked[i].index,
+        key,
+        // Pre-RingCT answers carry no mask; an empty mask is kept empty rather
+        // than padded, so a caller cannot mistake "no mask" for a zero one.
+        mask: mask === '' ? null : mask,
+        height: height === undefined ? null : Number(height),
+        unlocked: outs[i]?.unlocked === true,
+        txid: typeof outs[i]?.txid === 'string' && outs[i].txid !== '' ? outs[i].txid.toLowerCase() : null,
+      });
+    }
+    return { outs: parsed, address, asked, untrusted: body.untrusted === true };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

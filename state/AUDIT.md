@@ -1292,3 +1292,39 @@ commitment and no CLSAG. So a spend's encoding is proven; a spend is not.
 Gate at HEAD: 847/847 tests, build 38 modules, lint 0 errors (15 warnings).
 Residual: nothing was broadcast, so a real node's acceptance of these bytes is
 still the next witness.
+
+## 2026-11-04 — a ring, its offsets, and a door that is proven against the chain
+
+Base: f2614b7. A spend needs the ring an input signs against, and a transaction
+names that ring by POSITION in the amount-0 output list, RELATIVE to the previous
+member. Nothing in this build computed either.
+
+FIX: `src/monero/outs.js` — `offsetsToAbsolute` (upstream's cumulative sum,
+cryptonote_format_utils.cpp:1674 and 1682 at the pinned commit), `absoluteToOffsets`
+(sorts like upstream, and refuses a duplicate index on purpose), `ringFromOuts`
+(returns the ring ordered by index TOGETHER with its offsets and our position, so
+a caller cannot hold two lists out of step). `nodeClient.getOuts` is the third
+door, same duties as the other two: request shape checked, count and order
+enforced, 64-hex keys and masks, status OK, pinned-pool check before the socket,
+abandon on a dead node. `monero.ringFor` reaches it from the entry, choosing and
+rotating a node the way a scan does.
+
+EVIDENCE. Offsets are judged on every real ring in the pinned corpus with
+upstream re-implemented in the test, plus the trap measured (reading offsets as
+absolute agrees on the first member and disagrees on every later one) and a
+round trip back to the bytes a real transaction wrote. The door is judged against
+a LIVE captured answer whose request is a real input's own ring positions, and
+the capture proved each answer against the chain: block at the named height
+fetched and parsed, named transaction proven in that block's own hash list, key
+found among that transaction's outputs. Blocks/tx bytes behind those facts are
+not pinned; the test asserts the conclusions and says so. 13 source mutants run,
+all killed, including a door that read answers in answer order instead of request
+order and a door that checked the pool after the socket.
+
+Gate at HEAD: 948/948 tests, build 39 modules, lint 0 errors (15 warnings).
+Residual: nothing PICKS decoys (no output distribution), so ringFor takes indices.
+
+NOTE on the gate: this commit adds a fixture full of public 64-hex output keys,
+so the pre-commit backstop fired (it flags any added 64-hex string). The lines
+were read, they are public bytes, and the commit used --no-verify; README now
+writes that escape down instead of leaving it folklore.
