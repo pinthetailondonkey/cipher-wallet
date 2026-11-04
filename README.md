@@ -108,7 +108,10 @@ what exists, and names in its own header the parts that are still unjoined. When
 the caller passes a socket `connect`, the wallet builds its own peer transport
 (`wallet.peer`) and reaches a peer without hand-passed fetchers; without one it
 still takes them from the caller. A scan finding is returned rather than
-persisted, because the watcher alone may move a payment.
+persisted, because the watcher alone may move a payment; the xmr rail is the
+exception a caller opts into, because `src/monero/watch.js` turns a found output
+into the same kind of watcher report, so `monero.scan({ record: true })` moves
+an xmr pocket through that one path.
 
 ## Derivation (the format, not an implementation detail)
 

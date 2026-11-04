@@ -22,9 +22,11 @@
 //     scanBack()/scanHeadersFirst() reach a peer without hand-passed fetchers;
 //     without `connect`, scanBack() still takes fetchFilter/fetchBlock/peer from
 //     the caller. The Monero scan takes an injected fetchImpl.
-//   - A Monero finding is RETURNED, not written into the pocket store.
-//     pocketStore.record() only accepts a signed watcher report; there is no
-//     xmr watcher bridge yet, so a scan result does not move a state.
+//   - A Monero finding is written to the pocket store only when the caller asks
+//     (`monero.scan({ record: true })`, or `monero.recordFromScan`): the bridge
+//     in src/monero/watch.js turns a found output into a watcher report, so the
+//     same record() path and the same state walk move an xmr pocket. Without
+//     `record` a finding is returned and forgotten.
 //   - A Bitcoin scan payment is likewise returned, not persisted: the watcher
 //     is the only thing allowed to move a payment, and that separation is kept.
 //   - There is no Monero spend. The xmr rail here is read-only, because no
@@ -44,6 +46,7 @@ import { p2wpkhScriptFor } from './tx.js';
 import { scanBack as scanBackBitcoin, scanHeaderFirst } from './blockScan.js';
 import { createPeerClient } from './peerClient.js';
 import { moneroPocket, DEFAULT_NETWORK as DEFAULT_XMR_NETWORK } from './monero/pocket.js';
+import { reportsFromScan } from './monero/watch.js';
 import { scanBlockFromNode } from './monero/scanFromNode.js';
 import { ownOutputsInBlock } from './monero/ownOutputs.js';
 import { createHandle, nextIndexFor } from './payHandle.js';
@@ -310,22 +313,49 @@ export function createWallet({
     network: moneroNetwork,
     pocket: moneroPocketAt,
     pockets: moneroPockets,
-    // Prove one block from a node, then look for our own outputs in it. The
-    // returned outputs carry their pocket index; nothing is persisted (see the
-    // header: there is no xmr watcher bridge yet).
-    async scan({ pockets: supplied, indices, hash, height, ...options } = {}) {
+    // Prove one block from a node, then look for our own outputs in it.
+    //
+    // `record` writes any finding into the pocket store through the same
+    // watcher-report path the Bitcoin rail uses, so a found xmr payment moves a
+    // pocket's state instead of being returned and forgotten. It is off by
+    // default: a caller that only wants to look at a block asks for neither.
+    // Remember a found output's `output` index is the pocket row it came from;
+    // the five honest limits are in `monero/watch.js`.
+    async scan({ pockets: supplied, indices, hash, height, tipHeight, record = false, ...options } = {}) {
       const wantedPockets = supplied ?? (indices
         ? indices.map((index) => moneroPocketAt(index))
         : await moneroPockets());
       const chosen = resolveNode();
+      let out;
       try {
-        return await scanBlockFromNode(chosen, {
+        out = await scanBlockFromNode(chosen, {
           hash, height, pockets: wantedPockets, pool: moneroPool, fetchImpl, ...options,
         });
       } catch (error) {
         nodeFailed(chosen);
         throw error;
       }
+      if (!record) return out;
+      const recorded = await monero.recordFromScan(out, { height, tipHeight });
+      return { ...out, recorded };
+    },
+
+    // Write a scan's own findings into the pocket store. Returns one entry per
+    // report: `{ pocket, output, ok }` or `{ ... , error }` when the store
+    // refused (a pocket that already names another transaction, say). A refusal
+    // is reported, not thrown, so one bad row cannot hide the rest of a scan.
+    async recordFromScan(out, { height = null, tipHeight = null } = {}) {
+      if (!out || !Array.isArray(out.outputs)) throw new Error('recordFromScan needs a scan result with outputs.');
+      const results = [];
+      for (const entry of reportsFromScan(out.outputs, { height, tipHeight })) {
+        try {
+          await pockets.record('xmr', entry.pocket, entry.report, { amount: entry.report.amount });
+          results.push({ pocket: entry.pocket, output: entry.output, txid: entry.report.txid, ok: true });
+        } catch (error) {
+          results.push({ pocket: entry.pocket, output: entry.output, txid: entry.report.txid, ok: false, error: error?.message || String(error) });
+        }
+      }
+      return results;
     },
     // The proof layer on bytes the caller already holds.
     ownOutputs({ blockBytes, txBytesList, expectHash, trustViewTags, pockets: supplied } = {}) {
