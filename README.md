@@ -39,11 +39,16 @@ recovery shards, and nothing here has been run against real money.
   **The qualifier matters:** the refusal is real only when the commitment comes
   from the chain. Hand `decodeAmount` its own `info` *and* a commitment the
   caller computed, and `C = mask*G + amount*H` is the equation it just solved,
-  so any pair passes, including a lie. With the chain's commitment and a wrong
-  derivation it refuses 0 of 1000 random derivations per type passing, and 0 of
-  32 single-bit flips. Nothing in the signature binds the commitment to a
-  transaction, so "the chain's" is a caller convention, not an enforced one.
-  `decodeAmount` also has no caller in `src/` yet; the tests drive it.
+  so any pair passes, including a lie. Nothing in the signature binds the
+  commitment to a transaction, so "the chain's" is a caller convention, not an
+  enforced one. The one `src/` caller, `decodeMatchedAmounts`, does run the
+  membership scan itself and takes the commitment from the same output, so the
+  convention holds on the path the wallet would use.
+  **Measured, on the chain's commitment:** 0 of 32 single-bit derivation flips
+  are accepted for types 4/5/6. For types 1/2/3 the `h2d` bound refuses first
+  (1000 of 1000 random wrong derivations die as "superfluous data"), so on those
+  types the bound is what bites and the commitment check never runs. Both are
+  refusals; they are not the same guard.
   **What is still not pinned, and cannot be from inside this repository:** a
   real amount that matches one the owner knows, because the pad needs the view
   secret and keys stay out. So the commitment check proves a decode is *a* valid

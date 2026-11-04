@@ -383,10 +383,13 @@ test('the scan layer carries a matched output through to a named refusal', async
   const matches = scanTransaction({ pocket, transactionPublicKey: txPub, outputs });
   assert.deepEqual(matches, [0], 'the forged pocket matches output 0 and only output 0');
 
-  const decoded = decodeMatchedAmounts({ pockets: [pocket], transaction: { ...tx, outputs }, matches: [] });
-  assert.deepEqual(decoded, []);
+  // A pocket that does NOT match decodes nothing, because the function runs the
+  // membership scan itself now (matches are never an input, so they cannot be
+  // paired with the wrong transaction).
+  const stranger = { index: 1, spend: new Uint8Array(32).fill(9), viewSecret: new Uint8Array(32).fill(8) };
+  assert.deepEqual(decodeMatchedAmounts({ pockets: [stranger], transaction: { ...tx, outputs } }), []);
 
-  const found = decodeMatchedAmounts({ pockets: [pocket], transaction: { ...tx, outputs }, matches: [{ pocket: 0, output: 0 }] });
+  const found = decodeMatchedAmounts({ pockets: [pocket], transaction: { ...tx, outputs } });
   assert.equal(found.length, 1, 'the match is reported, not dropped');
   assert.equal(found[0].output, 0);
   assert.match(found[0].refused ?? '', /commitment|superfluous/i, 'and it carries why');
@@ -396,15 +399,61 @@ test('the scan layer carries a matched output through to a named refusal', async
 
 test('the amount step names its own refusals: no RingCT, and an unread output', async () => {
   const { decodeMatchedAmounts } = await import('../src/monero/scan.js');
+  const keys = await import('../src/monero/keys.js');
   const coinbaseLike = { outputs: [], rctType: 0, extra: new Uint8Array() };
-  assert.throws(() => decodeMatchedAmounts({ pockets: [], transaction: coinbaseLike, matches: [] }), /RingCT type/);
-  // A well-formed extra (tag 0x01 then a key) so the failure is about the
-  // output, not the extra parse.
+  assert.throws(() => decodeMatchedAmounts({ pockets: [], transaction: coinbaseLike }), /RingCT type/);
+  // A well-formed extra (tag 0x01 then a real curve point) so the failure is
+  // about the output, not the extra parse. The output MATCHES (its key is the
+  // pocket's derived key) but carries no ecdh, so the decode is what refuses.
   const withPubKey = new Uint8Array(33);
   withPubKey[0] = 0x01;
-  const bare = { outputs: [{ key: new Uint8Array(32) }], rctType: 6, extra: withPubKey };
+  withPubKey.set(G, 1);
+  const viewSecret = keys.scReduce32(new Uint8Array(32).fill(4));
+  const spendSecret = keys.scReduce32(new Uint8Array(32).fill(3));
+  const spend = keys.secretToPublic(spendSecret);
+  const bare = {
+    outputs: [{ key: keys.derivePublicKey(keys.keyDerivation(withPubKey.slice(1, 33), viewSecret), 0, spend), viewTag: undefined }],
+    rctType: 6,
+    extra: withPubKey,
+  };
   assert.throws(
-    () => decodeMatchedAmounts({ pockets: [{ index: 0, spend: new Uint8Array(32), viewSecret: new Uint8Array(32) }], transaction: bare, matches: [{ pocket: 0, output: 0 }] }),
+    () => decodeMatchedAmounts({ pockets: [{ index: 0, spend, viewSecret }], transaction: bare }),
     /ecdh/,
   );
+});
+
+// The positive path, which the caller had no test for: a synthetic output whose
+// ecdh and commitment are built from a derivation this test owns, so
+// decodeMatchedAmounts returns a number rather than a refusal. Synthetic on
+// purpose and labelled so: it proves the wiring, not the chain.
+test('a matched output whose derivation is ours decodes to a number through the scan layer', async () => {
+  const keys = await import('../src/monero/keys.js');
+  const { decodeMatchedAmounts } = await import('../src/monero/scan.js');
+
+  const viewSecret = keys.scReduce32(new Uint8Array(32).fill(0x42));
+  const spendSecret = keys.scReduce32(new Uint8Array(32).fill(0x24));
+  const spend = keys.secretToPublic(spendSecret);
+  const extra = new Uint8Array(33);
+  extra[0] = 0x01;
+  extra.set(G, 1);
+
+  const txPub = extra.slice(1, 33);
+  const derivation = keys.keyDerivation(txPub, viewSecret);
+  const key = keys.derivePublicKey(derivation, 0, spend);
+  const value = 2500000000000n;
+  const rctType = 6;
+  const info = encodeAmountForTest({ derivation, index: 0, value, rctType });
+  const mask = commitmentMask(derivationToScalar(derivation, 0));
+  const commitment = commitmentOf({ amount: value, mask });
+
+  const transaction = {
+    extra,
+    rctType,
+    outputs: [{ key, ecdh: info, commitment, viewTag: undefined }],
+  };
+  const decoded = decodeMatchedAmounts({ pockets: [{ index: 0, spend, viewSecret }], transaction });
+  assert.equal(decoded.length, 1);
+  assert.equal(decoded[0].value, value, 'the amount that was encoded is the amount that came back');
+  assert.equal(decoded[0].refused, undefined);
+  console.log('[ringct-amount] positive path: a matched synthetic output decodes to 2500000000000');
 });

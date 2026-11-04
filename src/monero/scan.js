@@ -131,14 +131,23 @@ export function scanForPockets(pockets, transaction) {
 // know "is this mine" should not pay for a decode or have to handle its
 // refusals.
 //
+// IT RUNS THE MEMBERSHIP SCAN ITSELF, from the same transaction it decodes.
+// That is deliberate and it is the second half of a finding the auditor and the
+// adjudicator both made: an earlier version took the matches as an argument, so
+// a caller could pair transaction A's matches with transaction B and decode B's
+// same-index output with no signal that the pair did not belong together. A
+// match is now never an input, so it cannot be mismatched.
+//
 // The commitment handed to the decoder is the transaction's OWN, never one the
 // caller built, because that is the only version of the check that means
 // anything (see src/monero/ringct.js). An output that matched but will not
 // decode is REPORTED with its refusal rather than dropped: dropping it would
 // make a broken decode look like a payment that is not there.
-export function decodeMatchedAmounts({ pockets, transaction, matches } = {}) {
-  if (!Array.isArray(pockets) || !Array.isArray(matches)) {
-    throw new Error('A decode takes the pockets and the matches as lists.');
+//
+// `transaction` is the shape scanForPockets takes, so output keys are bytes.
+export function decodeMatchedAmounts({ pockets, transaction } = {}) {
+  if (!Array.isArray(pockets)) {
+    throw new Error('A decode takes the pockets as a list.');
   }
   const outputs = transaction?.outputs ?? [];
   const rctType = transaction?.rctType;
@@ -148,7 +157,7 @@ export function decodeMatchedAmounts({ pockets, transaction, matches } = {}) {
   const txPublicKey = transactionPublicKey(transaction.extra ?? new Uint8Array());
   const byPocket = new Map(pockets.map((pocket) => [pocket.index, pocket]));
   const decoded = [];
-  for (const match of matches) {
+  for (const match of scanForPockets(pockets, { ...transaction, outputs })) {
     const pocket = byPocket.get(match.pocket);
     const output = outputs[match.output];
     if (!pocket || !output) throw new Error(`Match ${match.pocket}/${match.output} names a pocket or an output that is not here.`);
