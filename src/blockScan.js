@@ -165,7 +165,7 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
   // point at outputs in EARLIER blocks, so reading forwards is the only order in
   // which "this block spends our coin" can be answered from blocks already read.
   for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const { hash, height, body } = blocks[i];
+    const { hash, height, body, bytes: blockBytes } = blocks[i];
     // Pooled: the filter is the one two peers agreed on and the block confirms.
     // No pool: exactly the old single-peer question.
     //
@@ -202,7 +202,7 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
       }
     }
     const { filter } = pool
-      ? await verifiedFilter(pool, client, hash, { startHeight: height, prevScripts })
+      ? await verifiedFilter(pool, client, hash, { startHeight: height, prevScripts, block: blockBytes })
       : await fetchFilter(peer, hash, { startHeight: height });
     const mentioned = wanted.filter((script) => matchesFilter(filter, hash, script));
 

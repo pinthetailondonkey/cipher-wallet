@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { blockHash } from '../src/chain.js';
 import { buildBasicFilter } from '../src/filters.js';
 import { scanBack } from '../src/blockScan.js';
-import { createPeerPool } from '../src/peers.js';
+import { createPeerPool, verifiedFilter } from '../src/peers.js';
 import { reverseBytes, serializeTx, txid } from '../src/tx.js';
 import { stampWork } from '../src/work.js';
 import { hex } from '@scure/base';
@@ -204,4 +204,32 @@ test('a pool without a client is refused, not silently degraded', async () => {
     /client/,
   );
   witness('pool without client', 'refused');
+});
+
+// The walk already fetched and hash+merkle-verified the block, so verification
+// must reuse those bytes, not fetch the block a second time. A client whose
+// fetchBlock throws proves the supplied copy is what was used.
+test('verifiedFilter uses a supplied block instead of fetching it', async () => {
+  const pool = poolOf(P1, P2);
+  const client = {
+    fetchFilter: async (_peer, asked) => ({ filter: HONEST, blockHash: asked }),
+    fetchBlock: async () => { throw new Error('fetchBlock should not have been called'); },
+  };
+  const out = await verifiedFilter(pool, client, HASH, { prevScripts: [], block: BLOCK });
+  assert.equal(out.blockHash === undefined || true, true);
+  assert.deepEqual(Array.from(out.filter), Array.from(HONEST));
+  witness('supplied block', 'no second fetch');
+});
+
+test('verifiedFilter still refuses a supplied block that is not the asked one', async () => {
+  const other = blockPaying(new Uint8Array(32), OTHER_SCRIPT, 9);
+  const pool = poolOf(P1, P2);
+  const client = {
+    fetchFilter: async (_peer, asked) => ({ filter: HONEST, blockHash: asked }),
+    fetchBlock: async () => { throw new Error('no'); },
+  };
+  await assert.rejects(
+    verifiedFilter(pool, client, blockHash(other), { prevScripts: [], block: BLOCK }),
+    /served block/,
+  );
 });

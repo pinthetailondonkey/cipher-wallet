@@ -148,11 +148,15 @@ test('the wallet dials its own transport: scanBack finds a payment over the sock
     assert.equal(hex.encode(out.payments[0].script), hex.encode(script));
     assert.equal(out.payments[0].value, 4200n);
     assert.equal(out.payments[0].blockHash, hash);
-    // Both peers were asked for the filter (agreement) and one served the block.
+    // Both peers were asked for the filter (agreement); the walk fetched the
+    // block from ONE of them, and that is the copy verification uses too.
     for (const peer of [a, b]) {
       assert.equal(peer.seen.includes('getcfilters'), true, 'the filter was asked over the socket');
-      assert.equal(peer.seen.includes('getdata'), true, 'the block was asked over the socket');
     }
+    assert.ok(
+      a.seen.includes('getdata') || b.seen.includes('getdata'),
+      'the block was asked over the socket',
+    );
     witness('scanBack', `block ${hash.slice(0, 16)}`, `payments ${out.payments.length}`, `peers asked ${a.seen.includes('getcfilters') && b.seen.includes('getcfilters')}`);
   } finally {
     await a.close(); await b.close();

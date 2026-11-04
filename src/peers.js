@@ -239,20 +239,31 @@ export async function agreedTip(pool, fetchTip) {
 // body the header does not commit to is a refusal here rather than a believed
 // payment. This comment previously claimed the forge was impossible while it
 // was not; the false claim is recorded in README and pinned by a test.
-export async function verifiedFilter(pool, client, blockHash, { prevScripts, peers, startHeight } = {}) {
+export async function verifiedFilter(pool, client, blockHash, { prevScripts, peers, startHeight, block } = {}) {
   const agreed = await agreedFilter(pool, client.fetchFilter, blockHash, { peers, startHeight });
   const asked = String(blockHash ?? '').trim().toLowerCase();
 
-  // Ask a peer that agreed. If it will not serve the block, the filter stays
-  // unverified and is refused rather than believed on agreement alone.
-  let bytes = null;
+  // The block the filter is checked against. A caller that already holds the
+  // bytes (the scan's walk fetched and hash+merkle-verified them) passes them
+  // and saves a second fetch; the same hash check below still runs, so a
+  // supplied block that is not the one asked for is refused either way.
+  let bytes = block ?? null;
+  if (bytes !== null && !(bytes instanceof Uint8Array)) {
+    throw new Error('A supplied block is bytes.');
+  }
+
+  // Otherwise ask a peer that agreed. If it will not serve the block, the
+  // filter stays unverified and is refused rather than believed on agreement
+  // alone.
   let lastError = null;
-  for (const peer of agreed.peers) {
-    try {
-      ({ bytes } = await client.fetchBlock(peer, asked));
-      break;
-    } catch (error) {
-      lastError = error;
+  if (!bytes) {
+    for (const peer of agreed.peers) {
+      try {
+        ({ bytes } = await client.fetchBlock(peer, asked));
+        break;
+      } catch (error) {
+        lastError = error;
+      }
     }
   }
   if (!bytes) {
