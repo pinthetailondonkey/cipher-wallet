@@ -49,7 +49,7 @@
 import { matchesFilter } from './filters.js';
 import { verifyBlockBody } from './merkle.js';
 import { blockHash as hashOfBlock, walkBack, walkHeadersForward } from './chain.js';
-import { verifiedFilter } from './peers.js';
+import { verifiedFilter, agreedTip } from './peers.js';
 
 function sameBytes(a, b) {
   if (a.length !== b.length) return false;
@@ -85,6 +85,13 @@ function isCoinbaseInput(input) {
 // older call sites and their tests unchanged; that path believes a lone peer by
 // design, and the pool is how a caller stops doing so.
 //
+// The tip is the walk's other peer-supplied input. When a pool and client are
+// given and the caller pinned no `tipHash` (passing one is still the deliberate
+// override), the tip itself is agreed by two peers through peers.agreedTip
+// before the walk starts, so a lone peer cannot name a tip on its own private
+// chain and have the whole walk believe it. `client.fetchTip`, not `fetchTip`,
+// so the pool path stays the only one that asks more than one peer.
+//
 // `client` has the peerClient.js shape: fetchFilter(peer, hash, opts) and
 // fetchBlock(peer, hash). It is only consulted when a pool is given.
 export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, client = null, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [] } = {}) {
@@ -103,7 +110,20 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
   const outputsSeen = new Map();
   let unresolved = 0;
 
-  const blocks = await walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash, maxSteps });
+  const blocks = await walkBack({
+    fetchBlock,
+    peer,
+    // A tip hash is the walk's starting claim, and one peer's word is not a
+    // witness. When a pool and a client are present and the caller pinned no
+    // tip, two peers must name the same tip before it is used; otherwise this
+    // is exactly the old behaviour, the caller's tip or walkBack's own refusal.
+    tipHash: (pool && client && (tipHash === undefined || tipHash === null) && typeof client.fetchTip === 'function')
+      ? (await agreedTip(pool, client.fetchTip)).hash
+      : tipHash,
+    tipHeight,
+    stopHash,
+    maxSteps,
+  });
 
   // Oldest first, though the walk hands them back newest first. A block's spends
   // point at outputs in EARLIER blocks, so reading forwards is the only order in

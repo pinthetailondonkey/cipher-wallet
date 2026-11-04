@@ -17,6 +17,7 @@ import { blockHash } from '../src/chain.js';
 import { buildBasicFilter } from '../src/filters.js';
 import { scanBack, scanHeaderFirst } from '../src/blockScan.js';
 import { reverseBytes, serializeTx, txid } from '../src/tx.js';
+import { stampWork } from '../src/work.js';
 
 const OUR_SCRIPT = Uint8Array.from([0x00, 0x14, ...new Uint8Array(20).fill(7)]);
 const OTHER_SCRIPT = Uint8Array.from([0x00, 0x14, ...new Uint8Array(20).fill(9)]);
@@ -33,6 +34,7 @@ function blockPaying(prevDigest, script, fill) {
   const header = new Uint8Array(80).fill(fill);
   header.set(prevDigest, 4);
   header.set(reverseBytes(hex.decode(txid(tx))), 36);
+  stampWork(header);
   return new Uint8Array([...header, 0x01, ...serializeTx(tx, { witness: false })]);
 }
 

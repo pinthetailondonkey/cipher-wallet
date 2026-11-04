@@ -23,6 +23,7 @@ import { blockHash } from '../src/chain.js';
 import { buildBasicFilter } from '../src/filters.js';
 import { createPeerPool } from '../src/peers.js';
 import { serializeTx, txid, reverseBytes } from '../src/tx.js';
+import { stampWork } from '../src/work.js';
 
 const MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const SEED = rootFromMnemonic(MNEMONIC);
@@ -163,6 +164,7 @@ test('scanBack() walks a peer using the wallet\'s own issued script from the see
   const header = new Uint8Array(80).fill(7);
   header.set(new Uint8Array(32), 4); // parent: zeros, so the walk stops here
   header.set(reverseBytes(hex.decode(txid(tx))), 36);
+  stampWork(header);
   const block = new Uint8Array([...header, 0x01, ...serializeTx(tx, { witness: false })]);
   const hash = blockHash(block);
 
@@ -191,6 +193,7 @@ test('a wallet-configured peer pool makes scanBack agree, not trust one peer', a
   const header = new Uint8Array(80).fill(9);
   header.set(new Uint8Array(32), 4);
   header.set(reverseBytes(hex.decode(txid(tx))), 36);
+  stampWork(header);
   const block = new Uint8Array([...header, 0x01, ...serializeTx(tx, { witness: false })]);
   const hash = blockHash(block);
 

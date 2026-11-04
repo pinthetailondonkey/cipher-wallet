@@ -13,6 +13,7 @@
 import { hex } from '@scure/base';
 import { reverseBytes, sha256d } from './tx.js';
 import { verifyBlockBody } from './merkle.js';
+import { assertMeetsWork } from './work.js';
 
 const HEADER_SIZE = 80;
 
@@ -105,6 +106,12 @@ export async function walkHeadersForward({ fetchHeaders, peer, anchorHash, ancho
       if (parent !== previous) {
         throw new Error(`Header ${hash} does not connect to ${previous}, so the chain this peer served has a gap.`);
       }
+      // Checked after the hash and the link, because this is the check that
+      // costs a peer something. Everything above says the bytes are the header
+      // they claim to be and sit where they claim to sit; only the target says
+      // the header was actually mined, and without it a peer mines a private
+      // chain for free.
+      assertMeetsWork(header);
       height += 1;
       walked.push({ hash, height, header });
       await onHeader?.({ hash, height, header });
@@ -168,6 +175,11 @@ export async function walkBack({ fetchBlock, peer, tipHash, tipHeight, stopHash 
       // the hash check above.
       throw new Error(`Block ${actual} does not connect to ${blockHash(previous)}.`);
     }
+    // After the hash and the link, and before the block is accepted or carried
+    // anywhere: a header that links and has a matching body is still not a
+    // mined header unless it meets the target it names. This is the check a
+    // never-mined private chain cannot satisfy for free.
+    assertMeetsWork(blockHeader(bytes));
     blocks.push({ hash: actual, height: tipHeight - step, bytes, body });
     await onBlock?.({ hash: actual, bytes, body });
     if (stop && actual === stop) return blocks;

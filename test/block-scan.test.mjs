@@ -15,6 +15,7 @@ import { buildBasicFilter } from '../src/filters.js';
 import { scanBack } from '../src/blockScan.js';
 import { createPeerClient, decodeVersion, encodeVersion, frame } from '../src/peerClient.js';
 import { parseTx, reverseBytes, serializeTx, sha256d, txid } from '../src/tx.js';
+import { stampWork } from '../src/work.js';
 import { decodeFrame, decodeGetData, encodeCfilter } from '../src/wire.js';
 
 const OUR_SCRIPT = Uint8Array.from([0x00, 0x14, ...new Uint8Array(20).fill(7)]);
@@ -49,6 +50,7 @@ function blockWithTx(prevDigest, fill, tx) {
   const header = new Uint8Array(80).fill(fill);
   header.set(prevDigest, 4);
   header.set(reverseBytes(hex.decode(txid(tx))), 36);
+  stampWork(header);
   return new Uint8Array([...header, 0x01, ...serializeTx(tx, { witness: false })]);
 }
 

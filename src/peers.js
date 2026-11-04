@@ -172,6 +172,62 @@ export async function agreedFilter(pool, fetchFilter, blockHash, { peers, startH
   return { filter: first.filter, peers: agreed.map((answer) => answer.peer) };
 }
 
+// Ask peers where the chain ends.
+//
+// The tip hash is the most load-bearing peer-supplied value in a scan: walkBack
+// starts from it and numbers every height down from `tipHeight`, and the filter
+// question for every block below it is asked at a height the walk invented from
+// that claim. A lone peer that names a tip on its own private chain therefore
+// makes the whole walk believe that chain. Two peers have to name the same tip
+// before the walk starts from it.
+//
+// Same shape and same fail-closed rule as agreedFilter: ask one more than the
+// quorum when a spare is configured, anchor on the first valid answer, and
+// require MIN_AGREEMENT to name the SAME hash back. A missing or malformed
+// answer is a dead peer and is skipped, not a veto; a disagreeing valid answer
+// is a veto.
+export async function agreedTip(pool, fetchTip) {
+  if (typeof fetchTip !== 'function') throw new Error('An agreed tip needs a way to fetch a tip.');
+  pool.requireAgreement(MIN_AGREEMENT);
+  const asked = pool.pick(Math.min(pool.size(), MIN_AGREEMENT + 1));
+  if (asked.length < MIN_AGREEMENT) {
+    throw new Error(`This needs ${MIN_AGREEMENT} independent peers and ${asked.length} were asked.`);
+  }
+
+  const answers = [];
+  for (const peer of asked) {
+    let answer;
+    try {
+      answer = await fetchTip(peer);
+    } catch (error) {
+      answers.push({ peer, error: error?.message || String(error) });
+      continue;
+    }
+    // Accept a bare hash or an object carrying one. A tip that is not a hash is
+    // no answer, the same way a filter that names another block is no answer.
+    const hash = String(answer?.hash ?? answer?.tipHash ?? answer ?? '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) {
+      answers.push({ peer, error: 'no tip' });
+      continue;
+    }
+    answers.push({ peer, hash });
+  }
+
+  const good = answers.filter((answer) => answer.hash);
+  const first = good[0];
+  if (!first) {
+    const reasons = new Set(answers.map((answer) => answer.error || 'no tip'));
+    if (answers.length > 0 && reasons.size === 1) throw new Error([...reasons][0]);
+    throw new Error('No peer answered with a tip.');
+  }
+  const agreed = good.filter((answer) => answer.hash === first.hash);
+  if (agreed.length < MIN_AGREEMENT) {
+    const who = answers.map((a) => `${a.peer.host}:${a.peer.port}${a.error ? ` (${a.error})` : ''}`).join(', ');
+    throw new Error(`The peers did not agree on the tip, so nothing was believed. Asked: ${who}.`);
+  }
+  return { hash: first.hash, peers: agreed.map((answer) => answer.peer) };
+}
+
 // The filter a wallet may act on: agreed by two peers AND rebuilt from the
 // block itself. Agreement alone is two peers saying the same thing, and two
 // lying peers say the same thing too, so the block is the third witness. It

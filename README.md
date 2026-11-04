@@ -290,10 +290,12 @@ believes one `fetchFilter` by design; the pool is how a caller stops doing so.
 `test/quorum-scan.test.mjs` pins the agreed-over-a-liar path, a disagreement
 refused, and a one-peer pool refusing because one peer is not a witness.
 
-What this still does not do: it verifies a body against its header, not the
-chain's proof of work. A header's own work is not checked here, so a peer that
-mines a private header (or is handed one) can build a self-consistent block, and
-a short private chain of such blocks links and hashes cleanly.
+Work is now checked too. `walkBack` and `walkHeadersForward` decode each
+header's nBits and require its double-sha256 to be at or below the target the
+header names; a header that does not is refused by name. So a never-mined
+private chain no longer walks for free — the peer must at least set a target its
+hash meets. What remains unverified is the chain's total work and fork choice:
+two chains of real work are both accepted, and nothing here picks between them.
 
 Header-first walking is built, and it is not wired. `walkHeadersForward` counts
 forward from an anchor, checking every link; `scanHeaderFirst` fetches a body
@@ -313,9 +315,12 @@ what a caller reaches for.
 Where that bites is specific, and worth naming rather than hedging: a filter
 lookup asks about a block hash the wallet already has, and the header must hash
 to exactly that, so a lie on that path needs a second preimage of the asked hash.
-The walk is the open door, because its tip hash is peer-supplied: a peer can hand
-over a tip of its own making, and every link after it will check out. Deciding
-which chain is the real one is not in this build.
+The walk was the open door, because its tip hash is peer-supplied: a peer could
+hand over a tip of its own making, and every link after it would check out. When
+a `pool` and a client are given and the caller pins no tip, the tip itself is
+now agreed by two peers (`peers.agreedTip`) before the walk starts, so a lone
+peer no longer chooses the whole answer. Deciding which fork is the real one is
+still not in this build.
 
 ### What has gone wrong here
 

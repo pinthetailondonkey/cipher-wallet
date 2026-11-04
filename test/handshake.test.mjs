@@ -12,6 +12,7 @@ import net from 'node:net';
 import { createPeerClient, decodeVersion, encodeVersion, frame } from '../src/peerClient.js';
 import { hex } from '@scure/base';
 import { reverseBytes } from '../src/tx.js';
+import { stampWork } from '../src/work.js';
 import { decodeFrame, encodeCfHeaders, encodeCfilter, encodeHeaders } from '../src/wire.js';
 
 const BLOCK = '11'.repeat(32);
@@ -171,7 +172,7 @@ test('a peer that never claimed compact filters is not asked for one', async () 
 });
 
 test('headers are asked for over the socket and come back in the order the peer sent them', async () => {
-  const header = new Uint8Array(80).fill(7);
+  const header = stampWork(new Uint8Array(80).fill(7));
   const peer = await startPeer(
     [['version', encodeVersion({ nonce: 7n, services: SERVICES })], ['verack', new Uint8Array()]],
     { answer: (command) => (command === 'getheaders' ? [['headers', encodeHeaders([header, header])]] : []) },

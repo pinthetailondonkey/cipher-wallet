@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { hex } from '@scure/base';
 import { blockHash, blockHeader, blockConnects, headerConnects, previousBlockHash, walkBack } from '../src/chain.js';
 import { reverseBytes, serializeTx, sha256d, txid } from '../src/tx.js';
+import { stampWork } from '../src/work.js';
 import { createPeerClient, decodeVersion, encodeVersion, frame } from '../src/peerClient.js';
 import { decodeFrame, decodeGetData } from '../src/wire.js';
 
@@ -20,7 +21,9 @@ function headerWith(prevDigest, fill = 3, merkleRoot = null) {
   const out = new Uint8Array(80).fill(fill);
   out.set(prevDigest, 4);
   if (merkleRoot) out.set(reverseBytes(hex.decode(merkleRoot)), 36);
-  return out;
+  // Synthetic headers are never mined; a real but easy target (and a nonce
+  // ground to meet it) is what makes the walk's work check pass and stay honest.
+  return stampWork(out);
 }
 
 // A block-shaped body that a header can actually commit to: one transaction,
