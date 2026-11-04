@@ -41,9 +41,9 @@ import { ownOutputsInBlock } from './ownOutputs.js';
 // `expectHash` is the optional outside anchor for a HEIGHT request: the block id
 // the caller already believes belongs there. A height alone anchors nothing (see
 // the header), so a caller who knows which block they mean should pass it, or
-// ask by hash and get the same anchor for free. It is not accepted together with
-// `hash`: that would be two anchors and no rule for a disagreement, and `hash`
-// already is one.
+// ask by hash and get the same anchor for free. On a HASH request it is allowed
+// and simply loses: the asked-for hash is already the anchor, and two anchors
+// would need a rule for disagreeing with each other.
 export async function scanBlockFromNode(node, {
   hash, height, pockets, expectHash, trustViewTags = true, ...options
 } = {}) {
