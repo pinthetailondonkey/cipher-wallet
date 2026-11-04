@@ -484,3 +484,161 @@ The 185-type-1 sweep count is taken as reported, not re-run (a partial re-run is
 negative); the conclusion does not depend on it, because the upstream branch makes a multi-input
 Full impossible for a wallet-built transaction. The distinguishing term is still unwitnessed, and
 the text now says exactly that rather than implying a chain sample exists.
+
+## 2026-11-04 — 46db7eb "audit: fb70854, findings A-E" — **PARTIAL**
+
+Adjudicating the auditor. Fetched `rctTypes.cpp`, `rctSigs.cpp`, `rctOps.cpp` at the pinned
+`3fd0f88c20f559839cafb20911cb13cb45eba7bd` again and re-ran the numbers; none of the report's
+figures were accepted from prose.
+
+A reproduces: tag lengths 6/15; both pad pins match `keccak("amount"||k)` and
+`hash_to_scalar("commitment_mask"||k)` for two independent fills; H reproduced from G and
+`clearCofactor()` equals the pinned `8b655970…`. B reproduces exactly: 256/256 rows byte-equal
+after `sc_reduce32`, 17/256 for the unreduced keccak, and 256/256 if the comparison were mod l.
+That is the audit's own caveat, and it is correct: the byte comparison, not the vectors, is what
+kills the old bug.
+
+D reproduces by cutting, not by reading. Cut every byte of the base on six fixtures (362 / 402 /
+361 / 469 / 355 / 265 cuts): `arity fires: 0` in every case. A short base is caught by
+`cursor.take` ("output 1 commitment needs 32 bytes and 31 are left") or by the prunable varint;
+the arity guard is correct and has no reachable trigger. The audit's "close to unreachable" is if
+anything generous: on current code it is unreachable.
+
+C.iii: **the conclusion is right, the demonstration is false.** At the API level, own `info` plus
+own commitment is still a tautology: 100/100 lies pass per type (1..6), and 200/200 over runs of
+200. The audit's thesis stands. But the printed table claims the type-6 fixture's real `ecdh` plus
+a self-chosen commitment returns every lie. It does not. Re-ran it with the 0x99 fill, the chain's
+`ecdh`, and `commitmentOf({amount: lie, mask: derived})`:
+
+    lie 1 / 777 / 42000000000 / 18446744073709551615   all REFUSED
+    "The decoded pair does not rebuild the output's commitment"
+
+With the chain's `ecdh`, only the decoded value rebuilds the commitment; a caller has to supply
+its own `info` as well to make the lie pass, which is a different setup from the one printed. The
+audit overstated its evidence, not its result. That is the one thing in 46db7eb that is quietly
+wrong, and it is recorded here because a false demonstration is worse than a harsh verdict.
+
+E was correct at audit time: `git grep decodeAmount e14969a -- src/` returns the definition only,
+so "the only caller is no longer a test" was false then.
+
+**VERDICT on the audit: PARTIAL.** Four of five sections reproduce exactly; C's verdict is right;
+C.iii's table cannot have been produced by the code it names.
+
+## 2026-11-04 — 3249ef5, C fix (the qualifier) — **VERIFIED**
+
+The qualifier is present in `README.md:39-45` and `state/FINDING-F1-ringct-amount.md:139-144`, and
+it is accurate, not an overcorrection: it says the refusal is real only when the commitment comes
+from the chain, and that a caller supplying its own `info` and its own commitment re-solves the
+equation. Both halves re-measured:
+
+    chain commitment, wrong derivation, real fixtures, types 1..6:  0/1000 pass, 0/32 flips pass
+    own info + own commitment:                                       100/100 pass per type
+
+The 0/1000 and 0/32 hold for all six types, not just the two the test drives. The audit's bucket
+split is also right: 1000/1000 of the type 1/2/3 refusals are the superfluous-data bound, and
+1000/1000 of the type 4/5/6 refusals are the commitment. See the gap section for what that means.
+
+No overcorrection: the text still says the guard matters, and it does when the commitment is the
+transaction's.
+
+## 2026-11-04 — 3249ef5, D fix (byte shape and arity) — **VERIFIED**
+
+`outputs[i].commitment` is now a `Uint8Array` of exactly 32 on all six type families;
+`Buffer.from(output.commitment).length` is 32, so the UTF-8 trap is closed. Both forms still decode
+identically, and not only on a refusal: a self-consistent pair returns 123456789 through bytes,
+lowercase hex, spaced hex and uppercase hex. The new test only compares the two refusal messages
+(it uses a wrong derivation), so it proves parity of the refusal path, not of an accepted decode;
+the accepted path is correct anyway (re-derived here).
+
+The arity check is unchanged in logic and still correct: it compares the number of entries, and
+`cursor.take` now yields 32-byte entries, so its meaning did not shift from hex characters. The
+new comment states the unreachability plainly and gives the right reason. Cut sweep as above:
+0 firings, every short read caught earlier.
+
+## 2026-11-04 — 3249ef5, E fix (citations and callers) — **PARTIAL**
+
+1. README qualifier: fixed, accurate (see C).
+2. "the only caller is a test": **not fixed; now false in the other direction.** At HEAD
+   `src/monero/scan.js:160` calls `decodeAmount`, yet `README.md:46` says "`decodeAmount` also has
+   no caller in `src/` yet; the tests drive it" and `state/FINDING-F1-ringct-amount.md:137` says
+   "nothing in `src/` calls `decodeAmount` yet". The same commit's own header
+   (`src/monero/scan.js:15`) says it "gives `decodeAmount` a caller in `src/`". The commit message
+   says both. The correction is stale on arrival.
+3. FINDING line "a wrong derivation now yields a named refusal, not a number": the sentence is
+   unchanged, but point 4 immediately above now carries the qualifier, so it is mitigated rather
+   than fixed in place.
+4. Citation: fixed and now correct. `h2d` is defined at `src/ringct/rctTypes.cpp:144`;
+   `decodeRct` has 0 occurrences in `rctOps.cpp` and 6 in `rctSigs.cpp`, and calls `h2d` at
+   `rctSigs.cpp:1582`. The header names the definition file and the caller file correctly.
+5. Header provenance claim: resolved for the one citation that was wrong. Every other cited file
+   re-checked and correct.
+
+**VERDICT E: PARTIAL.** Citation and README fixed; the reachability sentence is still false at
+HEAD and contradicts the caller added in the same commit.
+
+## 2026-11-04 — 3249ef5, the new caller `decodeMatchedAmounts` — **PARTIAL**
+
+Answers to the three questions:
+
+- It uses the transaction's own commitment: yes, `outputs[match.output].commitment`, never one the
+  caller built, and it refuses a match whose output lacks `ecdh`/`commitment`.
+- A refusal is reported, not dropped: yes, it pushes `{pocket, output, refused}` and no `value`.
+  Driven on the type-6 fixture with a forged pocket whose one-time key lands on the chain's, the
+  result carries the reason and no number. Re-ran; gate 628/628.
+- Can it attach the wrong `ecdh` to the wrong output? Not inside one call: `outputs[match.output]`
+  and `index: match.output` are the same index, so the derivation index, the `ecdh` and the
+  commitment are all the output the match names. The residual hole is one level up: `matches` is
+  an argument and nothing binds it to `transaction`, and the result carries no transaction id. A
+  match taken from transaction A and passed with transaction B decodes B's same-index output with
+  no error (demonstrated; it returns a refusal only because the derivation does not fit). The
+  binding the C finding names is moved, not closed.
+
+**VERDICT: PARTIAL.** The wiring is real and the refusal is honest; the function still accepts a
+match set it cannot verify belongs to the transaction it decodes.
+
+## 2026-11-04 — the four builder commits, re-derived
+
+    fb70854  VERIFIED   branch, widths, pads, H, refusal set all re-derived; 0/1000, 0/32
+    a69c641  VERIFIED   header and test; caller-own pair passes, chain pair refuses
+    4e40861  VERIFIED   eleven fixtures, width 8/64, every output, bytes after D
+    e14969a  VERIFIED   near-misses: 0/32 flips, wrong index and swapped ecdh refused
+
+No arithmetic defect in the amount path was found by me either.
+
+## 2026-11-04 — what neither lane caught
+
+1. **The commit contradicts itself on reachability.** 3249ef5 adds the `src/` caller and in the
+   same diff writes that no `src/` caller exists, in both the README and the finding. The audit
+   could not see this (it audited e14969a); the builder wrote it while adding the caller; the
+   commit message states both versions.
+2. **The new caller does not bind its matches to its transaction.** `decodeMatchedAmounts` takes
+   `matches` as an argument and returns records with no transaction identity, so a caller can pair
+   transaction A's matches with transaction B and get B's same-index output decoded, or a refused
+   entry, with no signal that the pair belongs to a different transaction. This is the same
+   convention the C finding names, one layer up.
+3. **The 0/1000 figure is not evidence for the commitment guard on types 1/2/3.** On the
+   uncompressed types the `h2d` bound runs before `commitmentOf`, and 1000/1000 random wrong
+   derivations are refused as "superfluous data"; the commitment check never runs. The number is
+   true but measures the bound there, and both the README and the finding present it as the
+   chain-commitment refusal. The audit printed the bucket split but drew no consequence from it.
+4. Minor: the bytes-vs-hex parity test exercises only a refusal, and the new caller test only
+   reaches the refusal branch, so `decodeMatchedAmounts` has no positive decode test at all. The
+   accepted path is correct (re-derived here), but a broken decode that still refuses would pass
+   both tests.
+
+## 2026-11-04 — closing index (lane A, chain base 07f6c2d)
+
+    fb70854  VERIFIED     a69c641  VERIFIED
+    4e40861  VERIFIED     e14969a  VERIFIED
+    46db7eb  PARTIAL      (audit: A/B/D/E reproduce; C.iii demonstration false)
+    3249ef5  PARTIAL      (C VERIFIED, D VERIFIED, E PARTIAL, caller PARTIAL)
+
+Gate at HEAD, re-run by me, not read from the commit message:
+
+    node --test test/   -> 1..628, tests 628, pass 628, fail 0  (23.8s)
+    npm run build       -> build: 31 modules resolved
+    npm run lint        -> 15 warnings, 0 errors (95 files)
+
+Open, none blocking: the reachability sentence is false at HEAD; matches are not bound to the
+transaction; no positive decode of a real amount is possible in-repo (unchanged, the owner's view
+secret is external).
