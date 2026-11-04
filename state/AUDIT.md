@@ -1174,3 +1174,23 @@ Gate at HEAD: 733/733 tests, build 36 modules, lint 0 errors (15 warnings).
 Residuals: the row is a stranger's server reached over clearnet (the row says so);
 one node means no rotation until a second is named; `monero.scan` findings are
 still returned, not persisted.
+
+## 2026-11-04 — the pooled scan stops re-fetching a block it already holds (lane A, coordinator)
+
+Base: d8fb4de. Commit df09230. The residual named twice above: `verifiedFilter`
+always fetched the block itself, though the walk had already fetched, hashed and
+merkle-verified exactly those bytes.
+
+FIX: `verifiedFilter` takes an optional `block`; `scanBack` passes the walk's own
+`bytes`. The hash check still runs, so a supplied block that is not the asked one
+is refused (`served block …`). With no supplied block the old fetch-and-fall-back
+path is unchanged.
+
+TESTS: `test/quorum-scan.test.mjs` gains two — a client whose `fetchBlock` throws
+still verifies from the supplied bytes, and a supplied wrong block is refused.
+`test/transport.test.mjs`'s "both peers served the block" assertion became "both
+peers were asked for the filter; one served the block", which is the truth.
+
+Gate at HEAD: 735/735 tests, build 36 modules, lint 0 errors (15 warnings). The
+`work` goal's residual list loses the bandwidth item; the fork-choice and
+cleartext-row caveats stand.
