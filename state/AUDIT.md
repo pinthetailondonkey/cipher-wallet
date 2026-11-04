@@ -1194,3 +1194,24 @@ peers were asked for the filter; one served the block", which is the truth.
 Gate at HEAD: 735/735 tests, build 36 modules, lint 0 errors (15 warnings). The
 `work` goal's residual list loses the bandwidth item; the fork-choice and
 cleartext-row caveats stand.
+
+## 2026-11-04 — a second node, and rotation that actually happens (lane A, coordinator)
+
+Base: 597c92d. Commit 3becb65. With one shipped row the fail-closed rotation in
+`nodes.js` had nowhere to rotate to: a dead node pinned every following scan.
+
+EVIDENCE, live: `nodes.hashvault.pro:18081` answered `get_info` (height 3798946)
+and a `get_block_header_by_height`, and a full wallet scan against it read block
+f7c07778…, **22 transactions**. Both shipped rows are now live-verified.
+
+FIX: second row added. `resolveNode` remembers the node it handed out, and
+`monero.scan` calls `nodeFailed` on any throw, which `pool.abandon`s that node —
+so the NEXT scan starts on the next row. A node the caller named, or an injected
+pool, is not the wallet's to rotate.
+
+TEST: `test/entry.test.mjs` "a failed read rotates to the next shipped node" makes
+the first row refuse, asserts the second scan moved off it and read a block.
+
+Gate at HEAD: 736/736 tests, build 36, lint 0 errors (15 warnings).
+Residuals: two clearnet strangers (rows say so); a mid-scan death still refuses
+that scan by design; findings are returned, not persisted.
