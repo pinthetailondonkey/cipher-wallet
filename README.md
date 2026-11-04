@@ -65,6 +65,15 @@ recovery shards, and nothing here has been run against real money.
   fixed. The one witness the join lacked (no real fixture pays this wallet, so
   the success branch had no test) is now a synthetic block whose amount must
   come back through the whole path.
+- **A node driver fetches and scans one block.** `scanBlockFromNode` is
+  getBlock, then getTransactions, then `ownOutputsInBlock`, in that order. It
+  adds no trust: the fetch refuses the node's claims and the scan proves the
+  bytes. The one thing worth knowing is what a height request cannot anchor. A
+  Monero block header carries no height field, so a single block's bytes cannot
+  prove they are at height N; a height scan is therefore unanchored unless the
+  caller passes `expectHash`, and the result says so in an `anchored` flag. Ask
+  by hash, or pass the id you believe, if you want an anchor. `scripts/scan-live.mjs`
+  runs the whole path against a real node.
 - **`src/monero/rootVerify.js` is still unwired and is now redundant.** It was
   built as preparation for Lane C, but `walkBlockTxs` already rebuilds the tree
   root from proven ids and refuses on a mismatch, so nothing needs the separate
@@ -328,3 +337,12 @@ right, and only a vector knows the difference. Vectors are not ceremony here.
 Test vectors are vendored under `test/fixtures`; see the README there for
 provenance, the pinned upstream commits, both checksums, and the visible
 transformation applied to each file.
+
+The gates are offline. The live path is checked by hand, because a test that
+needs the network is a test that fails for reasons unrelated to the code:
+
+    CIPHER_XMR_NODE=xmr-node.cakewallet.com:18081 \
+      node scripts/scan-live.mjs --height 3796965
+
+It prints what it found and writes nothing. The other `scripts/` capture
+fixtures; they are not part of the gate either.
