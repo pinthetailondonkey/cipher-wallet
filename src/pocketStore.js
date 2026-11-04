@@ -115,6 +115,37 @@ export function createPocketStore(kv) {
     await writeDoc(table, doc.handle);
   }
 
+  // The row-writing half of an issue, without its own queue turn. Both issue()
+  // and issueNext() run inside serialized() and must not re-enter it.
+  async function writeIssue(table, pocket, { now = Date.now(), handle = undefined, storedHandle = null } = {}) {
+    if (!pocket || !PAYMENT_STATES.includes(pocket.state)) throw new Error('A pocket needs a state.');
+    const key = pocketKey(pocket.coin, pocket.index);
+    const existing = table[key];
+    if (existing) {
+      if (String(existing.address) !== String(pocket.address)) {
+        throw new Error('That pocket index already belongs to a different address.');
+      }
+      if (handle !== undefined) await writeDoc(table, handle);
+      return existing;
+    }
+    const row = {
+      coin: String(pocket.coin).toLowerCase(),
+      index: pocket.index,
+      address: pocket.address,
+      path: pocket.path,
+      state: pocket.state,
+      txid: null,
+      amount: null,
+      confirmations: 0,
+      issuedAt: now,
+      seenAt: null,
+      confirmedAt: null,
+    };
+    table[key] = row;
+    await writeDoc(table, handle === undefined ? storedHandle : handle);
+    return row;
+  }
+
   return {
     async list() {
       const { ok, table } = await readTable();
@@ -152,33 +183,29 @@ export function createPocketStore(kv) {
     issue(pocket, { now = Date.now(), handle = undefined } = {}) {
       if (!pocket || !PAYMENT_STATES.includes(pocket.state)) throw new Error('A pocket needs a state.');
       return serialized(async () => {
-      const { ok, table, handle: storedHandle } = await readDoc();
-      if (!ok) throw new Error('The pocket table on this device cannot be read.');
-      const key = pocketKey(pocket.coin, pocket.index);
-      const existing = table[key];
-      if (existing) {
-        if (String(existing.address) !== String(pocket.address)) {
-          throw new Error('That pocket index already belongs to a different address.');
-        }
-        if (handle !== undefined) await writeDoc(table, handle);
-        return existing;
-      }
-      const row = {
-        coin: String(pocket.coin).toLowerCase(),
-        index: pocket.index,
-        address: pocket.address,
-        path: pocket.path,
-        state: pocket.state,
-        txid: null,
-        amount: null,
-        confirmations: 0,
-        issuedAt: now,
-        seenAt: null,
-        confirmedAt: null,
-      };
-      table[key] = row;
-      await writeDoc(table, handle === undefined ? storedHandle : handle);
-      return row;
+        const { ok, table, handle: storedHandle } = await readDoc();
+        if (!ok) throw new Error('The pocket table on this device cannot be read.');
+        return writeIssue(table, pocket, { now, handle, storedHandle });
+      });
+    },
+
+    // Issue the NEXT pocket atomically. The handle read, the pocket built from
+    // it, and the advanced handle all happen inside one queue turn and land in
+    // one write, so two callers in one turn cannot be handed the same index.
+    // The builder gets the current stored handle (null on a device that has
+    // never issued) and returns { pocket, handle }. It may throw: a throw is
+    // before the write, so the table and handle are left untouched. The queue
+    // is not re-entrant, so this does not call issue().
+    issueNext(build, { now = Date.now() } = {}) {
+      if (typeof build !== 'function') throw new Error('Issuing the next pocket needs a builder.');
+      return serialized(async () => {
+        const { ok, table, handle: storedHandle } = await readDoc();
+        if (!ok) throw new Error('The pocket table on this device cannot be read.');
+        const built = await build(storedHandle);
+        if (!built || !built.pocket) throw new Error('The builder returned no pocket.');
+        if (built.handle === undefined) throw new Error('The builder returned no next handle.');
+        const row = await writeIssue(table, built.pocket, { now, handle: built.handle, storedHandle });
+        return { pocket: row, handle: built.handle };
       });
     },
 

@@ -22,11 +22,16 @@ export function createReceive({ seed, store, watcherUrl }) {
   }
 
   // Give a customer a new thing to pay. The stored handle moves forward in the
-  // same write as the pocket.
+  // same write as the pocket, and the whole read-handle -> derive -> write is
+  // one queue turn in the store, so two callers in the same turn get two
+  // distinct pockets instead of both reading the same handle.
   async function issue({ coin = 'btc', network = 'bc', label = '' } = {}) {
-    const current = (await handle()) || createHandle({ coin, label });
-    const { pocket, handle: next } = issuePocket(current, seed, { coin, network });
-    const row = await store.issue({ ...pocket, state: 'address_issued' }, { handle: next });
+    const { pocket: row, handle: next } = await store.issueNext((stored) => {
+      if (stored != null && !isHandle(stored)) throw new Error('The pay handle on this device is damaged.');
+      const current = stored || createHandle({ coin, label });
+      const built = issuePocket(current, seed, { coin, network });
+      return { pocket: { ...built.pocket, state: 'address_issued' }, handle: built.handle };
+    });
     return { pocket: row, handle: next };
   }
 
