@@ -68,15 +68,19 @@ export async function scanBlockFromNode(node, {
   // compares the fetched bytes against THAT, so a wrong claim is caught there
   // and not believed here.
   const hashes = fetched.txHashes;
-  const txBytesList = hashes.length === 0
-    ? []
-    : (await getTransactions(node, hashes, options)).bytes;
+  const txAnswer = hashes.length === 0 ? { bytes: [], outputIndices: [] } : await getTransactions(node, hashes, options);
+  const txBytesList = txAnswer.bytes;
 
   const out = ownOutputsInBlock({
     blockBytes: blob,
     txBytesList,
     pockets,
     trustViewTags,
+    // The daemons' global output indices for each transaction's outputs, aligned
+    // with txBytesList order. A found output whose transaction has a served list
+    // gets its absolute chain position attached (the number rings are relative
+    // to), which is what makes the row spendable without a second query.
+    outputIndicesPerTx: txAnswer.outputIndices,
     ...(anchor !== null ? { expectHash: anchor } : {}),
   });
 

@@ -43,6 +43,9 @@ import { walkBlockTxs } from './blockWalk.js';
 import { scanTransaction, bridgeWalkedTransaction, transactionPublicKey } from './scan.js';
 import { decodeAmount } from './ringct.js';
 import { keyDerivation } from './keys.js';
+import { hex } from '@scure/base';
+
+const encodeHex = (bytes) => hex.encode(bytes);
 
 // Scan the wallet's own outputs out of one PROVEN block.
 //
@@ -62,10 +65,19 @@ import { keyDerivation } from './keys.js';
 // forged-pocket spec changes spend but not view, so the tag never matches. With
 // `trustViewTags: false` every output gets the full key comparison.
 export function ownOutputsInBlock({
-  blockBytes, txBytesList, pockets, expectHash, trustViewTags = true,
+  blockBytes, txBytesList, pockets, expectHash, trustViewTags = true, outputIndicesPerTx = [],
 } = {}) {
   if (!(blockBytes instanceof Uint8Array)) throw new Error('A block scan reads the block from bytes.');
   if (!Array.isArray(pockets)) throw new Error('A block scan takes the pockets as a list.');
+  // Optional daemon-served global output indices, aligned with txBytesList. A
+  // shorter list is tolerated: the walk proves each transaction's id from its
+  // own bytes regardless, and a row whose transaction has no served list simply
+  // carries no absolute index (see below). A LONGER list is refused: it would be
+  // a claim about transactions this build never read.
+  if (!Array.isArray(outputIndicesPerTx)) throw new Error('The output indices are a list aligned with the transactions.');
+  if (outputIndicesPerTx.length > txBytesList.length) {
+    throw new Error(`More output-index lists (${outputIndicesPerTx.length}) than transactions (${txBytesList.length}).`);
+  }
 
   // 1. The block proves its own id, and against the expected id when one is given.
   const block = parseBlock(blockBytes, expectHash === undefined ? {} : { expectHash });
@@ -78,8 +90,10 @@ export function ownOutputsInBlock({
 
   // One transaction's worth of work. A transaction is read, then each pocket
   // scans it with its own key, and a match decodes with the SAME pocket's
-  // derivation. `txid` is the id the walk proved.
-  const scanOne = (txid, bytesOrTx) => {
+  // derivation. `txid` is the id the walk proved. `listIndex` is where these
+  // bytes sit in txBytesList (the miner transaction sits before all of them),
+  // which is how an optional global-index list finds its transaction.
+  const scanOne = (txid, bytesOrTx, listIndex = -1) => {
     scanned += 1;
     let tx;
     try {
@@ -120,8 +134,28 @@ export function ownOutputsInBlock({
         continue;
       }
       const derivation = keyDerivation(txPublicKey, pocket.viewSecret);
+      // This transaction's GLOBAL output indices, when the daemon served them:
+      // output i's absolute position in the chain-wide list of that amount's
+      // outputs. THE NUMBER A RING IS RELATIVE TO. The miner transaction's list
+      // would come at index -1 and is not requested; a transaction with no served
+      // list produces rows without an index rather than rows guessing zero, which
+      // would silently claim our output is the very first the chain ever made.
+      const globalIndices = listIndex >= 0 ? outputIndicesPerTx[listIndex] ?? null : null;
       for (const index of matches) {
         const row = { pocket: pocket.index, output: index, txid, coinbase };
+        // THE KEY IMAGE PATH, carried so the row is spendable without re-deriving
+        // from a transaction whose bytes may not be at hand later: the shared
+        // derivation and the transaction's public key. The one-time SECRET an
+        // input spends with is spendSecret + Hs(derivation || index), which needs
+        // exactly this derivation, so it rides along instead of being rebuilt.
+        // `derivationBytes` is the 32-byte r used by deriveSecretKey; txPublicKey
+        // is kept because a re-scan of the same payment should not have to ask
+        // again what the sender published.
+        row.derivation = encodeHex(derivation);
+        row.txPublicKey = encodeHex(txPublicKey);
+        if (globalIndices !== null && Number(index) < globalIndices.length) {
+          row.globalIndex = globalIndices[Number(index)];
+        }
         const output = transaction.outputs[index];
         if (output.ecdh === undefined || output.commitment === undefined) {
           row.refused = 'the output carries no ecdh slice and commitment: it is in a RingCT type Null transaction, which is every coinbase, and Null carries no amount.';
@@ -131,7 +165,7 @@ export function ownOutputsInBlock({
               derivation, index, info: output.ecdh, rctType: transaction.rctType, commitment: output.commitment,
             });
             row.value = value;
-            row.mask = mask;
+            row.mask = hex.encode(mask);
           } catch (error) {
             row.refused = error.message;
           }
@@ -150,7 +184,7 @@ export function ownOutputsInBlock({
   // the walk proved ids and those are what bind: a cached transaction object
   // would be a second thing that could drift.
   for (let i = 0; i < txBytesList.length; i += 1) {
-    scanOne(walk.ids[i], txBytesList[i]);
+    scanOne(walk.ids[i], txBytesList[i], i);
   }
 
   return { blockId: block.id, txTreeRoot: walk.txTreeRoot, transactionsScanned: scanned, outputs: found };

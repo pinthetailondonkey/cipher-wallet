@@ -226,7 +226,13 @@ test('THE SUCCESS BRANCH: a matched output with our derivation returns its amoun
   assert.equal(rows.length, 1, `exactly one owned output, got ${JSON.stringify(out.outputs, (_, v) => (typeof v === 'bigint' ? String(v) : v))}`);
   assert.equal(rows[0].value, value, 'the encoded value comes back through the whole join');
   assert.equal(rows[0].refused, undefined, 'and it is not a refusal');
-  assert.equal(typeof rows[0].mask, 'object', 'the mask rides back too');
+  assert.equal(typeof rows[0].mask, 'string', 'the mask rides back too, as the hex it is signed with');
+  // THE SPEND PATH, carried rather than rebuilt: the derivation and the sender's
+  // transaction public key are what a one-time secret and a key image come from.
+  assert.equal(rows[0].derivation.length, 64, 'the derivation rides back as 32 bytes of hex');
+  assert.deepEqual(new Uint8Array(Buffer.from(rows[0].derivation, 'hex')), keyDerivation(txPub, viewSecret));
+  assert.equal(rows[0].txPublicKey.length, 64);
+  assert.deepEqual(new Uint8Array(Buffer.from(rows[0].txPublicKey, 'hex')), txPub);
   console.log(`[lane-c] success branch: value ${value} returned through prove -> walk -> scan -> decode`);
 });
 

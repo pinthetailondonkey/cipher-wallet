@@ -435,6 +435,30 @@ export async function getTransactions(node, hashes, { pool = null, env, ...optio
       );
     }
     const bytes = [];
+    // The per-tx output_indices, when the daemon serves them: for each transaction,
+    // the GLOBAL index of each of its outputs, in the transaction's own order. A
+    // wallet needs exactly this to know its own output's absolute position (the
+    // number a ring's key_offsets are relative to), which is why upstream wallet2
+    // stores it as m_global_output_index straight from this same field.
+    //   - in-pool transactions do not have it; an empty list is kept as null rather
+    //     than silently mistaken for a real assignment of zero
+    const outputIndices = [];
+    for (let i = 0; i < txs.length; i += 1) {
+      const raw = txs[i].output_indices;
+      if (!Array.isArray(raw) || raw.length === 0) {
+        outputIndices.push(null);
+        continue;
+      }
+      const indices = [];
+      let ok = true;
+      for (const value of raw) {
+        try { indices.push(BigInt(value)); } catch { ok = false; break; }
+      }
+      if (!ok || indices.some((v) => v < 0n)) {
+        throw new Error(`The Monero node ${address} answered transaction ${i} with output indices that are not whole numbers: ${JSON.stringify(raw).slice(0, 90)}.`);
+      }
+      outputIndices.push(indices);
+    }
     for (let i = 0; i < txs.length; i += 1) {
       const asHex = typeof txs[i].as_hex === 'string' ? txs[i].as_hex.toLowerCase() : '';
       if (!HEX.test(asHex) || asHex.length === 0 || asHex.length % 2 !== 0) {
@@ -442,7 +466,7 @@ export async function getTransactions(node, hashes, { pool = null, env, ...optio
       }
       bytes.push(hex.decode(asHex));
     }
-    return { bytes, address, asked };
+    return { bytes, outputIndices, address, asked };
   } finally {
     if (timer) clearTimeout(timer);
   }
