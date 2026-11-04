@@ -47,8 +47,12 @@ console.log(`[funded] pocket 0 ${sender.address}`);
 console.log('[funded] WARNING: this demo mnemonic is public. It holds whatever strangers sent it. Never reuse the derivation below on mainnet.');
 
 // ---- phase 1: fund -------------------------------------------------------
+// With --txid plus --skip-faucet, skip phase 1 entirely and spend an already
+// confirmed payment instead of burning another faucet round.
 let txid = flag('txid', null);
-if (!txid || only('faucet')) {
+const skipFaucet = only('faucet') ? false : Boolean(flag('skip-faucet', false));
+if (!txid) throw new Error('No txid given.');
+if (!skipFaucet) {
   console.log(`[funded] asking the faucet (${FAUCET_URL}) to pay ${sender.address}`);
   const response = await fetch(FAUCET_URL, {
     method: 'POST',
