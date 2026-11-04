@@ -1101,3 +1101,46 @@ under `forkChoice:true`; a same-tip pool still works; a tie is refused.
 - Still a judgement, not forced: no caller is required onto it, and the winner's
   height rides on the winning peer's own claim like every other height here. A
   caller can pass a pinned `tipHash` to override both `agreedTip` and `chooseTip`.
+
+## 2026-11-04 — the pooled outside-spend refusal, and the transport door (lane A, coordinator)
+
+Two follow-ups after the defect fixes, both from "carry it through the whole
+workflow" rather than from an audit finding.
+
+### Outside spends in a pooled scan — commit 399054b, VERIFIED
+
+The residual in the section above was real and worse than a nuisance: verifying a
+peer's filter means rebuilding it, which needs the scripts the block's inputs
+spend. The walk only holds what it walked, so ANY block spending older money
+made the pooled path refuse — on a real chain, nearly every block.
+
+Own reproduction before the fix (one tx spending an outside output and paying us,
+two agreeing peers): `POOLED REFUSED: The peers agreed on a filter that its own
+block does not produce`. Fix: when the client can `fetchTx`, the previous tx is
+fetched once per txid, cached, and its spent output's script joins `prevScripts`,
+so the rebuild stays byte-exact. After: `POOLED ACCEPTED payments 1`, script equal
+to ours; the fetch is one per txid across repeated spends; without `fetchTx` the
+old refusal is unchanged; the no-pool path never calls it. `test/pooled-prevouts.test.mjs`
+4/4, added `peerClient.fetchTx` (getdata `MSG_WITNESS_TX`, NODE_NETWORK checked
+first) and `MSG_WITNESS_TX` in wire.js.
+
+### The transport and header-first doors — commit c4dcb51, VERIFIED
+
+`createWallet({ connect })` now builds `wallet.peer`, `scanBack` fills any fetcher
+the caller left out, and `wallet.scanHeadersFirst` reaches the built-but-unwired
+`scanHeaderFirst`. A worker wrote the change and the test and then died on a
+malformed tool call before committing; I reviewed, ran it and committed.
+`test/transport.test.mjs` runs on a REAL loopback socket: scanBack finds a payment
+with no handed-in fetchers, and scanHeadersFirst runs a header -> filter -> block
+cycle. Without `connect` the caller-supplied path is unchanged.
+
+Gate at HEAD: 731/731 tests, build 36 modules, lint 0 errors (15 pre-existing
+warnings).
+
+### Residuals after this
+
+- Pooled scan still re-fetches the block inside `verifiedFilter` though the walk
+  holds the bytes (bandwidth, not correctness).
+- `fetchTx` answers are trusted only through the filter rebuild: a wrong script is
+  a mismatch, which is a refusal, never a believed value.
+- `PUBLIC_NODES` still ships empty; header-first is still not the default.
