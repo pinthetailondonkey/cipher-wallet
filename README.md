@@ -101,6 +101,13 @@ live. Without it the hook exists and does nothing.
   amount. Merging pockets is possible and is the one moment the chain can link
   them; the app says so before it happens.
 
+`src/index.js` is the entry point that puts those together on one seed and one
+store (`createWallet`), and `package.json` names it, so `import 'cipher-wallet'`
+builds a wallet rather than a bag of modules. It is a seam, not a UI: it wires
+what exists, and names in its own header the parts that are still unjoined
+(no transport is constructed, and a scan finding is returned rather than
+persisted, because the watcher alone may move a payment).
+
 ## Derivation (the format, not an implementation detail)
 
 Every segment is hardened:
@@ -274,6 +281,14 @@ both the header check and a filter rebuilt from that body agree with the lie.
 With it, a body that does not hash up to its own header is refused outright.
 Both checks are exercised by a forged body in `test/filter-drill.test.mjs`,
 served over a socket by two agreeing peers.
+
+The quorum is now wired into the scan, not only held as policy. `scanBack` takes
+an optional `pool` and a peer `client`; with them, every block's filter comes
+from `verifiedFilter`, so two independent peers must agree AND the filter is
+rebuilt from the block before the scan uses it. With no pool, the scan still
+believes one `fetchFilter` by design; the pool is how a caller stops doing so.
+`test/quorum-scan.test.mjs` pins the agreed-over-a-liar path, a disagreement
+refused, and a one-peer pool refusing because one peer is not a witness.
 
 What this still does not do: it verifies a body against its header, not the
 chain's proof of work. A header's own work is not checked here, so a peer that
