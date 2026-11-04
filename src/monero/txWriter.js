@@ -219,8 +219,18 @@ export function writeRctBase({
 // bits needs roundup_pow2(outputs) * 64 bits, so L has log2 of that many keys
 // (six for one output, seven for two, eight for three or four...). Upstream's
 // expand checks L.size() >= 6 and that the proof covers the output count.
+// The L (and R) vector width a Bulletproof+ proof covering `outputs` amounts
+// needs: six keys per doubling of the 64-bit range. Exported because the CLSAG
+// message hashes these vectors, so the signer must know the width the writer
+// will use without re-deriving the formula differently.
+export function bulletproofPlusWidth(outputs) {
+  const n = Number(outputs);
+  if (!Number.isInteger(n) || n < 1) throw new Error('A proof covers at least one output.');
+  return 6 + Math.ceil(Math.log2(n));
+}
+
 export function writeType6Prunable({
-  inputCount, outputCount, ringSize, proofCount = 1, lCount, rCount, pseudoOuts = [],
+  inputCount, outputCount, ringSize, proofCount = 1, lCount, rCount, pseudoOuts = [], clsags = [],
 } = {}) {
   const inputs = count(inputCount, 'input count');
   const outputs = count(outputCount, 'output count');
@@ -230,7 +240,7 @@ export function writeType6Prunable({
   if (proofs !== 1) {
     throw new Error(`That transaction would carry ${proofs} Bulletproof+ proof(s) for ${outputs} output(s). Monero aggregates them into exactly one, and expand_transaction_1 refuses any other count.`);
   }
-  const width = 6 + Math.ceil(Math.log2(outputs));
+  const width = bulletproofPlusWidth(outputs);
   const lSize = count(lCount ?? width, 'L size');
   const rSize = count(rCount ?? width, 'R size');
   if (lSize < 6 || rSize < 6) {
@@ -246,10 +256,26 @@ export function writeType6Prunable({
     parts.push(varint(BigInt(lSize)), zeros(32 * lSize));
     parts.push(varint(BigInt(rSize)), zeros(32 * rSize));
   }
+  // One CLSAG per input: its ring scalars, then c1, then D, with NO count prefix
+  // because the ring size is fixed by the transaction's own input. A caller with
+  // real signatures writes them; a caller without gets zeros of the same width,
+  // so the section frames either way and the difference is visible rather than
+  // structural.
+  if (clsags.length > 0 && clsags.length !== inputs) {
+    throw new Error(`That prunable section needs one CLSAG per input: ${inputs} input(s), ${clsags.length} signature(s).`);
+  }
   for (let i = 0; i < inputs; i += 1) {
-    parts.push(zeros(32 * ring));                 // the CLSAG's ring scalars
-    parts.push(zeros(32));                        // c1
-    parts.push(zeros(32));                        // D
+    if (clsags.length === 0) {
+      parts.push(zeros(32 * ring), zeros(32), zeros(32));
+      continue;
+    }
+    const sig = clsags[i] ?? {};
+    if (!Array.isArray(sig.s) || sig.s.length !== ring) {
+      throw new Error(`That CLSAG ${i} carries ${sig.s?.length ?? 0} scalars for a ring of ${ring}.`);
+    }
+    for (const scalar of sig.s) parts.push(asBytes(scalar, `CLSAG ${i} scalar`, HASH_BYTES));
+    parts.push(asBytes(sig.c1, `CLSAG ${i} c1`, HASH_BYTES));
+    parts.push(asBytes(sig.D, `CLSAG ${i} D`, HASH_BYTES));
   }
   // The pseudo-output commitments, one per input. A caller that has them (the
   // builder does, because a commitment is arithmetic) writes real ones; a

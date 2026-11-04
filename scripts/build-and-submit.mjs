@@ -67,13 +67,27 @@ console.log(`[build-submit] ring built: ${ring.ring.length} members, offsets ${r
 
 const fee = 30_000_000n;
 const txSecret = keys.hashToScalar(Uint8Array.from([6, 6, 6]));
+
+// THE ONE SUBSTITUTION THAT MAKES THIS SIGNED, and it has to be said out loud.
+// A real ring member is the chain's output, and a real spender knows the secret
+// of exactly one of them. This wallet's input was never paid for on the chain, so
+// the member at our position is REPLACED by our own output: it is self-consistent
+// locally, while a node builds the ring from the chain and would see a different
+// key there. A funded wallet has no reason to do this.
+const oursAt = 1;
+const signedRing = ring.ring.map((member, i) => (
+  i === oursAt
+    ? { index: member.index, amount: member.amount, key: owned.key, mask: owned.commitment }
+    : { index: member.index, amount: member.amount, key: member.keyBytes, mask: member.maskBytes }
+));
+
 const built = buildSpend({
   input: {
-    keyOffsets: ring.offsets,
-    outputKey: owned.key,
-    outputSecret: ownedSecret,
-    value: 10n * XMR,
+    ring: signedRing,
+    ours: signedRing[oursAt].index,
+    secret: ownedSecret,
     mask: owned.mask,
+    value: 10n * XMR,
   },
   recipients: [
     { spendPublic: recipient.spend, viewPublic: recipient.view, value: 4n * XMR },
@@ -83,7 +97,7 @@ const built = buildSpend({
   txSecret,
 });
 
-console.log(`[build-submit] built ${built.bytes.length} bytes, id ${built.id}`);
+console.log(`[build-submit] built ${built.bytes.length} bytes, id ${built.id}, signed=${built.signed}`);
 console.log(`[build-submit] budgets: prefix ${built.prefix.length}, base ${built.base.length}, prunable ${built.prunable.length}`);
 console.log(`[build-submit] key image ${hex.encode(built.keyImage)}, pseudo-out ${hex.encode(built.pseudoOut).slice(0, 16)}…`);
 
@@ -134,6 +148,8 @@ if (pinFile) {
       ringIndices: ring.ring.map((r) => Number(r.index)),
       ownedValue: (10n * XMR).toString(),
       ownedIndex: 0,
+      ringMembers: signedRing.map((m) => ({ amount: Number(m.amount), index: Number(m.index), key: hex.encode(m.key), mask: hex.encode(m.mask) })),
+      ringPosition: oursAt,
     },
     bytes: hex.encode(built.bytes),
     byteLength: built.bytes.length,

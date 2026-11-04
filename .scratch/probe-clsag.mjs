@@ -1,0 +1,20 @@
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import * as keys from '../src/monero/keys.js';
+import { signClsag, verifyClsag, clsagMessage } from '../src/monero/clsag.js';
+import { commitmentOf } from '../src/monero/ringct.js';
+
+const rand = (n) => keys.hashToScalar(Uint8Array.from([n, n + 1, n + 2]));
+const n = 4;
+const ours = 2;
+const p = rand(9);
+const P = [];
+for (let i = 0; i < n; i += 1) P[i] = i === ours ? keys.secretToPublic(p) : keys.secretToPublic(rand(30 + i));
+const masks = Array.from({ length: n }, (_, i) => (i === ours ? rand(60) : rand(70 + i)));
+const C = masks.map((m, i) => commitmentOf({ amount: BigInt(i + 1) * 1000n, mask: m }));
+const pseudoMask = rand(90);
+const pseudoOut = commitmentOf({ amount: 1000n + 1000n, mask: pseudoMask });
+const ring = P.map((key, i) => ({ key, mask: C[i] }));
+const message = keccak_256(Uint8Array.from([1, 2, 3]));
+const sig = signClsag({ ring, position: ours, secret: p, mask: masks[ours], pseudoOut, message });
+console.log('reason:', verifyClsag({ ring, pseudoOut, signature: sig, message }));
+console.log('key image is 32 bytes:', sig.I.length);

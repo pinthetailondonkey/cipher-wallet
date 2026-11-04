@@ -1389,3 +1389,36 @@ those inputs offline, byte-identical, so a live verdict is attached to a test.
 LIMIT: the transaction is unsigned, so it is not in a pool and never will be.
 
 Gate at HEAD: 967/967 tests, build 40 modules, lint 0 errors (15 warnings).
+
+## 2026-11-04 — CLSAG: the signature, and one gap left
+
+Base: c4a00ab. A spend had no signature at all.
+
+FIX: `src/monero/clsag.js` — `clsagMessage` (get_pre_mlsag_hash for a
+Bulletproof+ transaction), `signClsag`, `verifyClsag` (a REASON STRING, and the
+whole check inside a try so a flipped byte that is no longer a curve point is a
+refusal and not a throw). `writeType6Prunable` writes real CLSAGs;
+`buildSpend` signs when given a ring (the ring carries what a signature binds to:
+the other members' keys and commitments) and stays unsigned without one.
+`monero.clsag` reaches it from the entry.
+
+THE TRAPS, each named in the module because each one cost a debugging round here:
+D is stored divided by eight while R uses the full point; sc_mulsub computes
+c - a*b so the final scalar reads backwards from its name; z is the mask
+difference against the PSEUDO MASK and the round hashes use mask MINUS the pseudo
+commitment; the aggregation domains are 32-byte keys, not strings; c1 is the
+challenge at ring position ZERO. One real constraint the signature cannot check
+itself is written down: the signed member's amount must equal the pseudo-output's,
+or a leftover H term stops every challenge closing (the test forges one to pin it).
+
+EVIDENCE: every ring size 1..6 at first/middle/last position; every field mutated
+one at a time; a signature lifted back OUT of a built transaction's wire bytes and
+checked against a message recomputed from those bytes; 9 source mutants, all
+killed. Live: `build-and-submit.mjs` submits a SIGNED transaction to a real node
+and it is read and EXPANDED (which checks the CLSAG count and that the
+signature's key image equals the prefix's) before failing verification.
+
+LIMIT, unchanged and now the only crypto gap: the Bulletproof+ proof is still zero
+bytes. After that, funding.
+
+Gate at HEAD: 991/991 tests, build 41 modules, lint 0 errors (15 warnings).

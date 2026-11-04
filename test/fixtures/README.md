@@ -447,3 +447,18 @@ the offsets reach the bytes.
 The daemon sentence that led to a real fix is here too, one commit earlier in
 spirit: the first submission was refused with `Sanity check failed` because
 Bulletproofs aggregate and the writer was writing one proof per output.
+
+## The pinned verdicts are for a SIGNED transaction
+
+`monero-built-spend.json` was re-pinned after CLSAG landed: the transaction now
+carries a real signature, and the daemon's two sentences are unchanged (read and
+expanded, then failed verification; the truncated control still fails framing).
+That the empty reason did not change is worth a sentence: verification is now
+failing on the zero range proof and on a fabricated ring member, and NOT on the
+signature's structure, because `expand_transaction_1` checks the CLSAG count and
+that the signature's key image equals the prefix's, and it passed both.
+
+Also pinned: the six ring members (keys and commitments) and `ringPosition`, so
+the build reproduces offline. The member at `ringPosition` is REPLACED by this
+wallet's own output, because the input was never paid for on the chain; a funded
+wallet would not substitute anything.

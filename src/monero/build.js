@@ -48,7 +48,9 @@ import {
 import {
   derivationToScalar, commitmentMask, commitmentOf, encodeAmountForTest,
 } from './ringct.js';
-import { writeTransactionPrefix, writeRctBase, writeType6Prunable } from './txWriter.js';
+import { writeTransactionPrefix, writeRctBase, writeType6Prunable, bulletproofPlusWidth } from './txWriter.js';
+import { ringFromOuts } from './outs.js';
+import { clsagMessage, signClsag } from './clsag.js';
 import { readTransaction, transactionIdOf } from './block.js';
 
 const TX_EXTRA_TAG_PUBKEY = 0x01;
@@ -139,10 +141,23 @@ const sumScalars = (list) => mod(list.reduce((total, s) => total + bytesToNumber
 export function buildSpend({
   input, recipients, fee, txSecret, unlockTime = 0n, rctType = DEFAULT_RCT_TYPE, extra = new Uint8Array(),
 } = {}) {
-  if (!input || !Array.isArray(input.keyOffsets) || input.keyOffsets.length === 0) {
-    throw new Error('A spend needs one input, with its ring offsets.');
+  // TWO WAYS TO NAME THE INPUT, and they produce different transactions. With
+  // `keyOffsets` alone the transaction is written unsigned. With `ring` (the
+  // members a node served, each with its key and commitment) the ring is ordered
+  // and the input is SIGNED, because only a ring carries what a signature binds
+  // to: the other members' keys and commitments.
+  const signed = Array.isArray(input?.ring);
+  if (signed && input.ring.length === 0) throw new Error('A spend cannot sign an empty ring.');
+  if (!signed && (!Array.isArray(input?.keyOffsets) || input.keyOffsets.length === 0)) {
+    throw new Error('A spend needs one input: either its ring offsets or the ring itself.');
   }
-  if (!(input.outputKey instanceof Uint8Array) || !(input.outputSecret instanceof Uint8Array)) {
+  if (signed && !(input.secret instanceof Uint8Array)) {
+    throw new Error('A signed spend needs the input\'s one-time secret.');
+  }
+  if (signed && input.ring.some((member) => member?.mask === undefined || member?.mask === null)) {
+    throw new Error('A signed spend needs every ring member\'s commitment mask, not just its key: the signature commits to both.');
+  }
+  if (!signed && (!(input.outputKey instanceof Uint8Array) || !(input.outputSecret instanceof Uint8Array))) {
     throw new Error('A spend needs the input\'s one-time key and the secret matching it.');
   }
   if (typeof input.value !== 'bigint') throw new Error('A spend needs the input\'s value, as a bigint.');
@@ -169,17 +184,53 @@ export function buildSpend({
   const mask = pseudoMask(txSecret, 0);
   const pseudoOut = commitmentOf({ amount: input.value, mask });
 
-  const keyImageOf = keyImage(input.outputKey, input.outputSecret);
+  // The ring, ordered, with the offsets derived from it and our position found
+  // rather than assumed. `ringFromOuts` is the same function a decoy fetch uses,
+  // so the order here is the order the chain would build from these offsets.
+  const ordered = signed ? ringFromOuts({ outs: input.ring, ours: input.ours }) : null;
+  const ring = ordered ? ordered.ring.map((member) => ({ key: member.keyBytes, mask: member.maskBytes })) : null;
+  const keyOffsets = ordered ? ordered.offsets : input.keyOffsets;
+  const position = ordered ? ordered.position : null;
+  const keyImageOf = signed ? keyImage(ring[position].key, input.secret) : keyImage(input.outputKey, input.outputSecret);
+
   const prefix = writeTransactionPrefix({
     version: 2,
     unlockTime,
-    inputs: [{ kind: 'key', amount: 0n, keyOffsets: input.keyOffsets, keyImage: keyImageOf }],
+    inputs: [{ kind: 'key', amount: 0n, keyOffsets, keyImage: keyImageOf }],
     outputs: outputs.map((o) => ({ amount: 0n, key: o.key, viewTag: o.viewTag })),
     extra: extraWithTxPublicKey(txPublicKey, extra),
   });
   const base = writeRctBase({ rctType, fee, inputCount: 1, outputs });
+
+  // SIGNED: the message first, then the signature, then the prunable that carries
+  // it. The order is forced by the message: get_pre_mlsag_hash hashes the prefix
+  // (which already carries the key image) and the base, so both must be written
+  // before anything is signed.
+  let signature = null;
+  if (signed) {
+    const width = bulletproofPlusWidth(outputs.length);
+    // The proof field keys the message hashes: six fixed keys per proof then its
+    // L and R vectors. Zero bytes, because the proof itself is not computed yet,
+    // but the WIDTH is the real width, which is what the hash commits to.
+    const proofKeys = new Uint8Array(32 * (6 + 2 * width));
+    const message = clsagMessage({ prefixBytes: prefix, baseBytes: base, proofKeys });
+    signature = signClsag({
+      ring,
+      position,
+      secret: input.secret,
+      mask: input.mask,
+      pseudoOut,
+      pseudoMask: mask,
+      message,
+    });
+  }
+
   const prunable = writeType6Prunable({
-    inputCount: 1, outputCount: outputs.length, ringSize: input.keyOffsets.length, pseudoOuts: [pseudoOut],
+    inputCount: 1,
+    outputCount: outputs.length,
+    ringSize: keyOffsets.length,
+    pseudoOuts: [pseudoOut],
+    clsags: signature ? [signature] : [],
   });
   const bytes = concatBytes([prefix, base, prunable]);
 
@@ -199,6 +250,8 @@ export function buildSpend({
     id: transactionIdOf(readTransaction(bytes, 0, 'built spend')),
     txPublicKey,
     keyImage: keyImageOf,
+    signed,
+    signature,
     pseudoOut,
     // The mask behind the pseudo-output, so a caller (and the test) can check
     // the balance statement without recomputing it.

@@ -1,4 +1,6 @@
 // A ring, and the offsets a transaction writes for it.
+
+import { hex } from '@scure/base';
 //
 // A Monero input does not name its ring members by key. It names them by
 // POSITION in the chain-wide list of outputs of that amount, and it names them
@@ -99,13 +101,34 @@ export function ringFromOuts({ outs, ours } = {}) {
   const rows = outs.map((out, i) => {
     const index = wholeOffset(out?.index, `output ${i} index`);
     const amount = out?.amount === undefined ? 0n : wholeOffset(out.amount, `output ${i} amount`);
-    const key = typeof out?.key === 'string' ? out.key.trim().toLowerCase() : '';
+    // A key arrives as the hex a node served or as the bytes a builder holds;
+    // both are kept, because the signature needs bytes and a screen wants hex.
+    const raw = out?.key;
+    const key = raw instanceof Uint8Array ? hex.encode(raw) : (typeof raw === 'string' ? raw.trim().toLowerCase() : '');
     if (!/^[0-9a-f]{64}$/.test(key)) {
       throw new Error(`That output ${i} carries no 64-hex key. A ring member without a key is a position the signature cannot sign for.`);
     }
     if (seen.has(index)) throw new Error(`That ring names output ${index} twice. Two members at one index are one decoy, and the chain would write a zero offset for it.`);
     seen.set(index, i);
-    return { amount, index, key };
+    // A ring member is a KEY AND A COMMITMENT: the offsets need the position,
+    // a signature needs the key and the mask, so both ride through here rather
+    // than being fetched a second time and re-ordered by hand. The mask is
+    // optional because an offsets-only caller has none.
+    const rawMask = out?.mask;
+    const mask = rawMask instanceof Uint8Array
+      ? hex.encode(rawMask)
+      : (typeof rawMask === 'string' ? rawMask.trim().toLowerCase() : null);
+    if (mask !== null && !/^[0-9a-f]{64}$/.test(mask)) {
+      throw new Error(`That output ${i} carries a mask that is not 64 hex: ${String(mask).slice(0, 40)}.`);
+    }
+    return {
+      amount,
+      index,
+      key,
+      keyBytes: raw instanceof Uint8Array ? raw : hex.decode(key),
+      mask,
+      maskBytes: mask === null ? null : (rawMask instanceof Uint8Array ? rawMask : hex.decode(mask)),
+    };
   });
 
   rows.sort((a, b) => (a.index < b.index ? -1 : a.index > b.index ? 1 : 0));

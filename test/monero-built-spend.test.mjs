@@ -32,6 +32,8 @@ import { moneroPocket } from '../src/monero/pocket.js';
 import { readTransaction } from '../src/monero/block.js';
 import * as keys from '../src/monero/keys.js';
 import { buildOutput, buildSpend } from '../src/monero/build.js';
+import { verifyClsag, clsagMessage } from '../src/monero/clsag.js';
+import { bulletproofPlusWidth } from '../src/monero/txWriter.js';
 import { commitmentOf } from '../src/monero/ringct.js';
 import { offsetsToAbsolute } from '../src/monero/outs.js';
 import { submitTx } from '../src/monero/nodeClient.js';
@@ -52,11 +54,11 @@ const rebuild = () => {
   const ownedSecret = keys.deriveSecretKey(derivation, BUILD.ownedIndex, sender.spendSecret);
   return buildSpend({
     input: {
-      keyOffsets: BUILD.ringOffsets.map(BigInt),
-      outputKey: owned.key,
-      outputSecret: ownedSecret,
-      value: BigInt(BUILD.ownedValue),
+      ring: BUILD.ringMembers.map((m) => ({ amount: BigInt(m.amount), index: BigInt(m.index), key: hex.decode(m.key), mask: hex.decode(m.mask) })),
+      ours: BigInt(BUILD.ringMembers[BUILD.ringPosition].index),
+      secret: ownedSecret,
       mask: owned.mask,
+      value: BigInt(BUILD.ownedValue),
     },
     recipients: [
       { spendPublic: recipient.spend, viewPublic: recipient.view, value: BigInt(BUILD.amounts[0]) },
@@ -80,7 +82,7 @@ test('the pinned build reproduces offline, byte for byte', () => {
   assert.deepEqual(readTransaction(BYTES, 0, 'pinned').pseudoOuts[0], built.pseudoOut);
 });
 
-test('the bytes read back as the transaction that was submitted', () => {
+test('the bytes read back as the SIGNED transaction that was submitted', () => {
   const tx = readTransaction(BYTES, 0, 'pinned build');
   assert.equal(tx.end, BYTES.length);
   assert.equal(tx.version, 2);
@@ -93,7 +95,7 @@ test('the bytes read back as the transaction that was submitted', () => {
   assert.deepEqual(offsetsToAbsolute(BUILD.ringOffsets.map(BigInt)).map(Number), FIXTURE.source.ringIndicesFetched);
 });
 
-test('a real daemon READ the intact bytes and then failed them on verification', () => {
+test('a real daemon READ the intact signed bytes and then failed them on verification', () => {
   const intact = FIXTURE.verdicts.intact;
   assert.equal(intact.accepted, false);
   assert.equal(intact.status, 'Failed');
@@ -131,4 +133,45 @@ test('the daemon answers a submission through the wallet\'s own door', async () 
   assert.equal(verdict.accepted, false);
   assert.equal(verdict.reason, 'double spend', 'the daemon\'s own sentence is carried back, not swallowed');
   assert.equal(verdict.txid, null);
+});
+
+test('the pinned transaction is SIGNED, and its signature verifies against its own bytes', () => {
+  // The build is signed now, so the pin covers the signature too: lift it out of
+  // the prunable at the offsets the wire uses (scalars, c1, D, then pseudo-outs)
+  // and check it against a message recomputed from the parsed transaction.
+  const built = rebuild();
+  assert.equal(built.signed, true);
+  const tx = readTransaction(BYTES, 0, 'pinned signed build');
+  const pseudo = 32 * tx.inputs.length;
+  const ringSize = tx.inputs[0].keyOffsets.length;
+  const tail = tx.prunableBytes;
+  const signature = {
+    I: hex.decode(tx.inputs[0].keyImage),
+    s: Array.from({ length: ringSize }, (_, i) => tail.slice(tail.length - pseudo - 64 - 32 * (ringSize - i), tail.length - pseudo - 64 - 32 * (ringSize - i - 1))),
+    c1: tail.slice(tail.length - pseudo - 64, tail.length - pseudo - 32),
+    D: tail.slice(tail.length - pseudo - 32, tail.length - pseudo),
+  };
+  const message = clsagMessage({
+    prefixBytes: tx.prefixBytes,
+    baseBytes: tx.baseBytes,
+    proofKeys: new Uint8Array(32 * (6 + 2 * bulletproofPlusWidth(tx.outputs.length))),
+  });
+  const reason = verifyClsag({
+    ring: BUILD.ringMembers.map((m) => ({ key: hex.decode(m.key), mask: hex.decode(m.mask) })),
+    pseudoOut: tx.pseudoOuts[0],
+    signature,
+    message,
+  });
+  assert.equal(reason, null, `the pinned signature verifies: ${reason}`);
+});
+
+test('the fabricated ring member is named as such, because a node would disagree', () => {
+  // The input was never paid for on the chain, so the member at ringPosition is
+  // ours and not the chain's. Locally consistent, chain-inconsistent: the pin has
+  // to say so or a reader will assume the ring is the one a node served.
+  assert.equal(BUILD.ringMembers.length, 6);
+  const ours = BUILD.ringMembers[BUILD.ringPosition];
+  assert.equal(Number(ours.index), BUILD.ringIndices[BUILD.ringPosition]);
+  const other = BUILD.ringMembers[BUILD.ringPosition === 0 ? 1 : 0];
+  assert.notEqual(ours.key, other.key);
 });

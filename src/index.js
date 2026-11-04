@@ -29,13 +29,15 @@
 //     `record` a finding is returned and forgotten.
 //   - A Bitcoin scan payment is likewise returned, not persisted: the watcher
 //     is the only thing allowed to move a payment, and that separation is kept.
-//   - There is no Monero spend. The format can be WRITTEN now (`monero.tx`
-//     re-encodes a transaction's prefix, base and type 6 prunable) and a ring
-//     can be FETCHED and turned into offsets (`monero.ringFor`) and an UNSIGNED
-//     transaction can be built (`monero.buildSpend`: outputs, commitments, a key
-//     image, a balanced base), and `monero.submit` hands the bytes to a real
-//     node for its own verdict. Nothing SIGNS a CLSAG or a Bulletproof+, so a
-//     submitted transaction is read, expanded and then failed on verification.
+//   - There is no Monero spend, only the shape of one. The format can be WRITTEN
+//     (`monero.tx`), a ring can be FETCHED (`monero.ringFor`), and a transaction
+//     can be built AND SIGNED (`monero.buildSpend` with a ring: outputs,
+//     commitments, a key image, a balanced base, one CLSAG per input), and
+//     `monero.submit` hands the bytes to a real node for its own verdict. What is
+//     missing is the Bulletproof+ range proof, so a submitted transaction is
+//     read, expanded, and then failed on verification. The input is also
+//     fabricated: a chain-valid spend needs the wallet to have been PAID, so its
+//     input is a real output a node can look up.
 //
 // The factory uses every module's PUBLIC signature only, so lanes editing
 // receive.js / blockScan.js internals do not touch this file.
@@ -66,6 +68,7 @@ import { getOuts, submitTx } from './monero/nodeClient.js';
 import {
   buildSpend as buildXmrSpend, buildOutput, txPublicKeyFrom, outputDerivation,
 } from './monero/build.js';
+import { clsagMessage, signClsag, verifyClsag } from './monero/clsag.js';
 
 const DEFAULT_BTC_NETWORK = 'bc';
 
@@ -437,6 +440,9 @@ export function createWallet({
     // the outputs are decodable by their own recipients, which is what the tests
     // prove through this same call.
     buildSpend: buildXmrSpend, buildOutput, txPublicKeyFrom, outputDerivation,
+    // The signature one input carries, reachable on its own so a caller can sign
+    // or check something that is not a whole transaction.
+    clsag: { message: clsagMessage, sign: signClsag, verify: verifyClsag },
   };
 
   return {

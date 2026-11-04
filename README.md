@@ -249,8 +249,27 @@ pseudo-outputs a signature signs against and threw them away. They are now kept,
 whichever section carries them (the base for type 2, the prunable for the
 Bulletproof family, nowhere for Full, which expansion rebuilds).
 
-What a built spend still is not: **signed**. The Bulletproof+ vectors and the
-CLSAG scalars are zero bytes of the right width, so a node would refuse it. `taux`
+**It is signed now, with one gap left.** `src/monero/clsag.js` signs one input
+and checks one input, written from upstream's `CLSAG_Gen`/`verRctCLSAGSimple` and
+the device hooks beside them, including the parts that are traps: D is stored
+divided by eight while R uses the full point, the aggregation domains are 32-byte
+keys rather than strings, the round hashes commit to `mask - pseudoOut`, and c1
+is the challenge at ring position zero whichever position was signed. The tests
+run every ring size from one to six at the first, middle and last position (so
+"the loop never runs" and "the loop wraps through zero" both happen), mutate
+every field one at a time, and then take the signature back OUT of a built
+transaction's wire bytes at the offsets the serializer writes and check it
+against a message recomputed from those bytes. Nine source mutants, all killed.
+
+What is still zero is the **Bulletproof+ range proof** (the right number of zero
+bytes in the right places), and that is the only thing standing between a real
+node's refusal and its acceptance. `scripts/build-and-submit.mjs` submits a
+SIGNED transaction to a live node: it is read and expanded (which is where the
+daemon checks the CLSAG count and that the key image in the signature equals the
+prefix's) and then fails verification with no specific reason. The last honest
+gap after that is funding: this wallet's input was never paid for on the chain,
+so the member at its ring position is its own rather than the chain's, while a
+node builds the ring from the chain. `taux`
 and `mu` are computed rather than guessed, because they are arithmetic, and the
 pseudo-output mask is derived from the transaction secret so a rebuild is
 byte-identical. `monero.buildSpend` reaches all of it from the wallet.

@@ -478,3 +478,25 @@ test('monero.submit rotates off a dead node', async () => {
   assert.match(seen.at(-1), /hashvault/);
   assert.equal(verdict.accepted, true);
 });
+
+test('monero.clsag signs and verifies through the wallet\'s own door', async () => {
+  const keys = await import('../src/monero/keys.js');
+  const w = buildWallet({ env: {} });
+  const scalar = (n) => keys.hashToScalar(Uint8Array.from([n, n + 1]));
+  const secret = scalar(21);
+  const mask = scalar(22);
+  const pseudoMask = scalar(23);
+  const { commitmentOf } = await import('../src/monero/ringct.js');
+  const ring = [0, 1, 2].map((i) => ({
+    key: i === 1 ? keys.secretToPublic(secret) : keys.secretToPublic(scalar(30 + i)),
+    mask: commitmentOf({ amount: 5_000_000_000_000n, mask: i === 1 ? mask : scalar(40 + i) }),
+  }));
+  const pseudoOut = commitmentOf({ amount: 5_000_000_000_000n, mask: pseudoMask });
+  const message = w.monero.clsag.message({ prefixBytes: Uint8Array.from([1, 2, 3]), baseBytes: Uint8Array.from([4, 5]) });
+
+  const sig = w.monero.clsag.sign({ ring, position: 1, secret, mask, pseudoOut, pseudoMask, message });
+  assert.equal(w.monero.clsag.verify({ ring, pseudoOut, signature: sig, message }), null);
+
+  const flipped = { ...sig, c1: (() => { const c = Uint8Array.from(sig.c1); c[0] ^= 1; return c; })() };
+  assert.match(w.monero.clsag.verify({ ring, pseudoOut, signature: flipped, message }), /do not close/);
+});
