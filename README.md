@@ -111,7 +111,8 @@ still takes them from the caller. A scan finding is returned rather than
 persisted, because the watcher alone may move a payment; the xmr rail is the
 exception a caller opts into, because `src/monero/watch.js` turns a found output
 into the same kind of watcher report, so `monero.scan({ record: true })` moves
-an xmr pocket through that one path.
+an xmr pocket through that one path; a pocket issued with `amount` is checked
+against that price, so a short xmr payment is refused like a short btc one.
 
 ## Derivation (the format, not an implementation detail)
 
