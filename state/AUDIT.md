@@ -642,3 +642,87 @@ Gate at HEAD, re-run by me, not read from the commit message:
 Open, none blocking: the reachability sentence is false at HEAD; matches are not bound to the
 transaction; no positive decode of a real amount is possible in-repo (unchanged, the owner's view
 secret is external).
+
+## 2026-11-04 — b50c24c adjudicated (lane A, independent), auditor e26fcee
+
+Target `b50c24c` and its audit `state/AUDIT-b50c24c.md`. Gate re-run by me off the worktree,
+not read from any message:
+
+    node --test test/   -> 1..637, tests 637, pass 637, fail 0  (36.0s)
+    npm run build       -> build: 32 modules resolved
+    npm run lint        -> 15 warnings, 0 errors (97 files)
+
+### The auditor — **PARTIAL**
+
+Its strongest checks re-run and reproduced. B: header byte flip -> "proves the id", wrong expectHash
+-> refused, swapped txs -> "hash-list index 0 claims ...". C: viewTag/ecdh/commitment ride the
+bridge, key becomes bytes, second pass identical. D: forged matching pocket -> filter ON found 0,
+OFF found 1. A overflow: lengths 2^40, 2^53, 2^63, 2^69 all "cut short", no crash. No FALSE found.
+
+Both stated caveats are TRUE.
+
+1. Caveat 1 ("no chain-decoded value") is TRUE and is a HOLE, not only a caveat, and the audit's
+   wording files the hole away: it says the join's value path is "only exercised via synth-encoded
+   round trips", but no test drives `ownOutputsInBlock` to its SUCCESS branch (`row.value` /
+   `row.mask`). The synth round trips exercise `decodeAmount` alone; the join never takes the
+   success branch in-repo. I forced it: a synthetic type-5 transaction (`ecdh` from
+   `encodeAmountForTest`, `commitment` from `commitmentOf`) inside a rebuilt block made the join
+   return `value 424242n`, the mask, and the walk's txid. The branch is CORRECT but WITNESSED BY
+   NOTHING, including the `pockets.find`/derivation wiring. E stays VERIFIED as honesty; the clean
+   OVERALL is what this discounts.
+2. Caveat 2 ("with a wrong pocket viewSecret a true output is skipped by the filter") is TRUE, but
+   D files it "note (not a defect)". It is material: under the default `trustViewTags: true` a
+   key-matching output is silently missed (ON 0 / OFF 1, reproduced). Sound by construction (the
+   tag is a function of the derivation) and still a silent-empty mode.
+
+Verdict on the auditor: **PARTIAL**. Every letter reproduces; the OVERALL "no FALSE or PARTIAL"
+overstates because the commit's headline value path has no witness and caveat 2 is understated.
+
+### the merge-mining fix, from my own bytes — **VERIFIED**
+
+Upstream re-fetched at the pin (`tx_extra.h`, `serialization/string.h`,
+`serialization/binary_archive.h`, `serialization/variant.h`). Variant tag is one `uint8_t`
+(`binary_archive.h:68,167,234`); `member_do_serialize` reads a `std::string` through
+`::do_serialize`, which is `serialize_varint(size)` then `serialize_blob` (`string.h:36-51`). Real
+3796965 miner extra (87 bytes) hand-walked: `03 21 | 33 bytes (00 depth + 32B root) | 01 | 32B pubkey
+| 02 11 | 17B nonce`; skip lands at 35, pubkey 36..68, walk ends 87/87, byte-identical to
+`transactionPublicKey`. Padding is NOT length-prefixed upstream (`tx_extra_padding` reads a run of
+0x00 with no varint), so `tag 0x00 -> continue` is right.
+
+Adversarial, all pass: length landing exactly on the boundary (with and without a later pubkey),
+zero length, multi-byte length (`0x80 0x01` = 128), nested 0x00s and a 0x01+key-like run inside the
+skipped region, lone `0x80` (incomplete) -> throw, overrun -> "cut short". Nothing skipped that
+should be read, nothing read that should be skipped. Two honest notes, no defect: the skip trusts
+the outer length and never parses the inner depth/root, so an inner string upstream would reject is
+accepted here, and `0xDE` (mysterious-minergate) is still a named refusal.
+
+### what neither lane checked (throwaway probes, no fix)
+
+- zero non-miner txs: block mainnet-c (`txHashes` 0, list []) -> scanned 1, outputs 0, id correct.
+- zero-output tx: synth type-5 tx, `outputCount` 0, in a rebuilt block -> scanned 2, no throw.
+- duplicate pockets: NOT deduped. Same pocket twice -> two identical rows. Two distinct pockets
+  sharing `index` -> both decode with the FIRST pocket's viewSecret (`pockets.find`), so the second
+  secret is never used. Real ambiguity when indices collide.
+- ordering: deterministic — miner first, then block-tx index order, pocket order inside a tx.
+- a tx that fails to read: the whole call throws and `transactionsScanned` is NOT returned, so a
+  caller loses the partial count.
+- the miner-tx match branch (untested in-repo): a forged match on the miner output returns
+  `coinbase: true`, txid = `minerTxId`, the fixed Null refusal. Correct.
+
+### item 4 — is txBytesList bound to blockBytes? **VERIFIED, no hole**
+
+`ownOutputsInBlock` calls `walkBlockTxs(block, txBytesList)` and uses `walk.ids`/`walk.txTreeRoot`;
+the walk throws on any disagreement, so "did it return" is enforced, not assumed. The binding is
+complete: `blockBytes` -> `txHashes` + `minerId`/`txTreeRoot` -> `block.id` (checked against
+`expectHash`), and every `txBytesList[i]` must prove an id equal to `block.txHashes[i]` plus a tree
+root rebuilt from `block.minerTxId`. The scan's second `readTransaction(txBytesList[i])` reads the
+same array the walk proved. Empirically: different count -> refused; rotation -> "hash-list index 0
+claims ..."; a same-transactions, different-miner block passes, correctly, because identity is the
+tx id. A "different block" list passes only when its ids coincide. The miner tx is bound via
+`block.id`/tree root. No hole.
+
+    node --test test/   -> 637/637/0 ; build 32 ; lint 0e (15w)
+
+Open, none blocking: the join success branch is unwitnessed in-repo (correct, shown synthetically);
+`pocket.index` collisions make the decode's derivation ambiguous; a failed tx read loses the partial
+scanned count.
