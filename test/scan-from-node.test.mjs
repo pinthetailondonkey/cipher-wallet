@@ -35,18 +35,20 @@ const POCKET = moneroPocket(SEED, 0);
 const NODE = 'peer.onion:18081';
 
 // Answers shaped like a real daemon's, from the pinned capture.
-function nodeStub({ blockHex = BLOCK_HEX, heightClaim = 3796965, hashClaim = BLOCK_ID, txHex = TX_HEX, txIds = TX_IDS, dropTx = false } = {}) {
+// Shapes taken from a REAL daemon answer: num_txes lives in block_header, json
+// is a STRING holding only tx_hashes, and get_transactions moves an unheld hash
+// into missed_tx rather than inventing a tx entry for it.
+function nodeStub({ blockHex = BLOCK_HEX, heightClaim = 3796965, hashClaim = BLOCK_ID, numTxes, txHex = TX_HEX, txIds = TX_IDS, dropTx = false } = {}) {
   return async (url, init) => {
     const body = JSON.parse(init?.body ?? '{}');
     const answer = (result) => ({ ok: true, status: 200, url, text: async () => JSON.stringify({ jsonrpc: '2.0', id: '0', result }) });
     // get_block rides the json_rpc door (method in the body); get_transactions
     // rides the REST door (path in the url). Both are real shapes.
     if (body.method === 'get_block') {
-      const jsonObj = { tx_hashes: txIds, num_txes: txIds.length };
       return answer({
         blob: blockHex,
-        block_header: { height: heightClaim, hash: hashClaim },
-        json: JSON.stringify(jsonObj),
+        block_header: { height: heightClaim, hash: hashClaim, num_txes: numTxes ?? txIds.length },
+        json: JSON.stringify({ tx_hashes: txIds }),
       });
     }
     if (String(url).includes('get_transactions')) {
@@ -160,6 +162,40 @@ test('a node that HONOURS its wrong claim is refused at the fetch, by name', asy
     }),
     /count and the list|does not carry/,
   );
+});
+
+test('a node whose block_header num_txes disagrees with its own json list is refused', async () => {
+  await assert.rejects(
+    scanBlockFromNode(NODE, {
+      hash: BLOCK_ID, pockets: [POCKET], fetchImpl: nodeStub({ numTxes: 999 }),
+    }),
+    /said the block holds 999/,
+  );
+});
+
+test('a height scan is labelled UNANCHORED, a hash scan is anchored', async () => {
+  const byHeight = await scanBlockFromNode(NODE, { height: 3796965, pockets: [POCKET], fetchImpl: nodeStub() });
+  assert.equal(byHeight.anchored, false, 'one block cannot prove its own height');
+  const byHash = await scanBlockFromNode(NODE, { hash: BLOCK_ID, pockets: [POCKET], fetchImpl: nodeStub() });
+  assert.equal(byHash.anchored, true, 'the asked-for hash is an outside anchor');
+  console.log('[scan-from-node] anchored: by hash yes, by height no');
+});
+
+test('a height scan ACCEPTS a different block if the node claims the height faithfully', () => {
+  // The honest limitation, pinned rather than hedged: a Monero header has no
+  // height, so if a node serves another block and claims the requested height,
+  // nothing here can tell. The result says `anchored: false` for exactly this.
+  const other = read('monero-block-mainnet-c.json');
+  const otherHex = unspaced(other.block.blob);
+  return scanBlockFromNode(NODE, {
+    height: 3796965,
+    pockets: [POCKET],
+    // claims height 3796965 while serving a different block's bytes
+    fetchImpl: nodeStub({ blockHex: otherHex, hashClaim: unspaced(other.block.claimedId), txHex: [], txIds: [] }),
+  }).then((out) => {
+    assert.equal(out.blockId, unspaced(other.block.claimedId), 'the other block was accepted');
+    assert.equal(out.anchored, false, 'and the result says why nothing caught it');
+  });
 });
 
 test('a block with no non-miner transactions is scanned, not skipped', async () => {

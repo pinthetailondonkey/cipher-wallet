@@ -8,12 +8,20 @@
 // the block's identity from the fetch (what was ASKED for) into the proof as the
 // thing the bytes must equal.
 //
-// WHAT IS PASSED AS `expectHash`. When the caller asked by hash, that hash. When
-// they asked by height, the id is not known yet, so the block is fetched, its id
-// is proven, and THEN the proof is re-run against the proven id — a height read
-// is a request for "whatever block is at N", and the node's own height claim is
-// only a claim. The fetch already refuses a height disagreement, so the two
-// checks together mean a node cannot serve a different block than either one.
+// WHAT A HEIGHT REQUEST CAN AND CANNOT ANCHOR. A Monero block HEADER carries no
+// height field, so one block's bytes cannot prove they are at height N — the
+// only link to N is the fetching node's `block_header.height`, which getBlock
+// already cross-checks. So a height scan is anchored by the node, and a block
+// scan is anchored by nothing but itself, unless the caller also passes the hash
+// they believe. That is a property of one block, not a defect, and it is why the
+// caller who wants an anchor should ask by hash. What a later range walk would
+// add — linking each block to its parent, and so pinning a height by counting —
+// is not in this build.
+//
+// So the height branch parses ONCE. Taking the parsed id and passing it back as
+// `expectHash` (the obvious reading of "re-prove") is a tautology: parseBlock is
+// deterministic, so the second parse re-derives the same id from the same bytes
+// and cannot fail. Proven once is enough; the result is labelled self-consistent.
 //
 // WHAT THIS DOES NOT DO, said plainly:
 //   - it scans ONE block. Walking a range, and deciding which chain is the real
@@ -25,7 +33,6 @@
 
 import { getBlock, getTransactions } from './nodeClient.js';
 import { ownOutputsInBlock } from './ownOutputs.js';
-import { parseBlock } from './block.js';
 
 // Fetch one block and scan it for `pockets`.
 //
@@ -38,35 +45,33 @@ export async function scanBlockFromNode(node, {
   const fetched = await getBlock(node, { hash, height }, options);
   const blob = fetched.blob;
 
-  // The transaction bytes. The daemon's hash list is only a claim, so the walk
-  // will prove every one of them; the list is used here solely to know WHAT to
-  // ask for, and a count mismatch is caught by the walk.
+  // The transaction bytes. The list here is the DAEMON's claim about which
+  // transactions the block holds; it decides only what to ask for. The block's
+  // own list is derived from its bytes inside ownOutputsInBlock, and the walk
+  // compares the fetched bytes against THAT, so a wrong claim is caught there
+  // and not believed here.
   const hashes = fetched.txHashes;
   const txBytesList = hashes.length === 0
     ? []
     : (await getTransactions(node, hashes, options)).bytes;
 
-  // A hash request is proved against the hash that was asked for.
-  if (fetched.askedByHash !== null) {
-    return {
-      ...ownOutputsInBlock({
-        blockBytes: blob, txBytesList, pockets, trustViewTags, expectHash: fetched.askedByHash,
-      }),
-      node: fetched.address,
-      askedByHash: fetched.askedByHash,
-      askedByHeight: null,
-    };
-  }
+  const out = ownOutputsInBlock({
+    blockBytes: blob,
+    txBytesList,
+    pockets,
+    trustViewTags,
+    // A hash request has an external anchor: the id that was asked for. A height
+    // request has none, so no expectHash is passed and the result is labelled.
+    ...(fetched.askedByHash !== null ? { expectHash: fetched.askedByHash } : {}),
+  });
 
-  // A height request: prove the id from the bytes first, then prove the scan
-  // against that id, so nothing downstream rides on the node's height claim.
-  const proven = parseBlock(blob);
-  const out = ownOutputsInBlock({ blockBytes: blob, txBytesList, pockets, trustViewTags, expectHash: proven.id });
   return {
     ...out,
     node: fetched.address,
-    askedByHash: null,
+    askedByHash: fetched.askedByHash,
     askedByHeight: fetched.askedByHeight,
     nodeClaimedHeight: fetched.claimedHeight,
+    // True only when the id was proved against something outside the block.
+    anchored: fetched.askedByHash !== null,
   };
 }
