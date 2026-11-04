@@ -435,3 +435,46 @@ test('monero.buildSpend builds an unsigned spend that the wallet\'s own scan can
     outputs: bridgeWalkedTransaction(tx).outputs,
   }), [0]);
 });
+
+test('monero.submit hands the bytes to a node and carries the daemon\'s own sentence back', async () => {
+  const answer = read('monero-built-spend.json');
+  const w = buildWallet({ env: {} });
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, body: JSON.parse(init.body) });
+    return { ok: false, status: 500, url, text: async () => JSON.stringify({ status: 'Failed', reason: 'double spend' }) };
+  };
+
+  const verdict = await w.monero.submit({ txAsHex: answer.bytes, fetchImpl });
+  assert.match(seen[0].url, /cakewallet/, 'the shipped list chose the node');
+  assert.equal(seen[0].body.tx_as_hex, answer.bytes, 'the bytes go up unchanged');
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.reason, 'double spend', 'a refusal is returned, not thrown');
+  assert.equal(verdict.txid, null);
+
+  const accepted = await w.monero.submit({
+    txAsHex: answer.bytes,
+    doNotRelay: true,
+    fetchImpl: async (url) => ({ ok: true, status: 200, url, text: async () => JSON.stringify({ status: 'OK', tx_hash: answer.id }) }),
+  });
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.txid, answer.id);
+  assert.equal(accepted.doNotRelay, true);
+
+  await assert.rejects(w.monero.submit({ fetchImpl }), /as hex/);
+});
+
+test('monero.submit rotates off a dead node', async () => {
+  const answer = read('monero-built-spend.json');
+  const seen = [];
+  const w = buildWallet({ env: {} });
+  const fetchImpl = async (url) => {
+    seen.push(url);
+    if (url.includes('cakewallet')) throw new Error('ECONNREFUSED');
+    return { ok: true, status: 200, url, text: async () => JSON.stringify({ status: 'OK', tx_hash: answer.id }) };
+  };
+  await assert.rejects(w.monero.submit({ txAsHex: answer.bytes, fetchImpl }), /ECONNREFUSED|cakewallet/);
+  const verdict = await w.monero.submit({ txAsHex: answer.bytes, fetchImpl });
+  assert.match(seen.at(-1), /hashvault/);
+  assert.equal(verdict.accepted, true);
+});

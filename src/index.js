@@ -33,8 +33,9 @@
 //     re-encodes a transaction's prefix, base and type 6 prunable) and a ring
 //     can be FETCHED and turned into offsets (`monero.ringFor`) and an UNSIGNED
 //     transaction can be built (`monero.buildSpend`: outputs, commitments, a key
-//     image, a balanced base), but nothing signs a CLSAG or a Bulletproof+, and
-//     nothing broadcasts.
+//     image, a balanced base), and `monero.submit` hands the bytes to a real
+//     node for its own verdict. Nothing SIGNS a CLSAG or a Bulletproof+, so a
+//     submitted transaction is read, expanded and then failed on verification.
 //
 // The factory uses every module's PUBLIC signature only, so lanes editing
 // receive.js / blockScan.js internals do not touch this file.
@@ -59,7 +60,7 @@ import {
 import { offsetsToAbsolute, absoluteToOffsets, ringFromOuts } from './monero/outs.js';
 import { createHandle, nextIndexFor } from './payHandle.js';
 import { nodeSourceFromEnv } from './monero/nodes.js';
-import { getOuts } from './monero/nodeClient.js';
+import { getOuts, submitTx } from './monero/nodeClient.js';
 // `buildSpend` is already the Bitcoin one in the btc rail's scope, so the
 // Monero builder is imported under its coin and exposed as monero.buildSpend.
 import {
@@ -412,6 +413,22 @@ export function createWallet({
       return { ...built, node: answer.address, untrusted: answer.untrusted };
     },
     ring: { offsetsToAbsolute, absoluteToOffsets, ringFromOuts },
+
+    // Hand a built transaction to a node and bring its own sentence back. The
+    // node is chosen like every other xmr read here, and a transport failure
+    // rotates; the daemon's verdict is RETURNED rather than thrown, because "it
+    // parsed your bytes and disliked the signature" is information, not an
+    // error, and a caller that only sees a throw cannot tell the two apart.
+    async submit({ txAsHex, doNotRelay = false, node: suppliedNode, ...options } = {}) {
+      if (!txAsHex) throw new Error('submit needs the transaction bytes as hex.');
+      const chosen = suppliedNode ? String(suppliedNode).trim().toLowerCase() : resolveNode();
+      try {
+        return await submitTx(chosen, { txAsHex, doNotRelay }, { pool: moneroPool, fetchImpl, ...options });
+      } catch (error) {
+        if (!suppliedNode) nodeFailed(chosen);
+        throw error;
+      }
+    },
 
     // An UNSIGNED transaction. The ring offsets, the recipients, the fee and the
     // input's own one-time pair go in; bytes that frame and an id come out. It is

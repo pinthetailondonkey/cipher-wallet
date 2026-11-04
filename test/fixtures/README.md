@@ -424,3 +424,26 @@ What is NOT pinned: the block and transaction bytes behind the recorded
 verification, so the test asserts the recorded conclusions rather than
 re-deriving them. Re-deriving means re-running the script, which needs a node.
 Provenance, node and re-derive recipe are in the fixture's `source`.
+
+## monero-built-spend.json — bytes this repo built, and what a real daemon said
+
+The first fixture here that is not a stranger's bytes. It is one UNSIGNED spend
+built by `scripts/build-and-submit.mjs`, submitted to a shipped node live, plus
+the daemon's two sentences verbatim: the intact bytes get `status Failed` with an
+EMPTY reason (read, expanded, then failed verification), and the same bytes with
+one byte removed get `Sanity check failed` (the parse/expand stage, named). The
+contrast is the evidence, which is why both verdicts are pinned rather than only
+the interesting one.
+
+The daemon is `nodes.hashvault.pro:18081`, clearnet, on 2026-11-04. The build
+inputs are recorded too (mnemonic, pocket indices, both secrets, amounts, ring
+offsets), so the test rebuilds the transaction OFFLINE and requires
+byte-identical output; that is what lets a live verdict hang off an offline test.
+
+What is NOT proven: the transaction is unsigned, so it is in no pool and never
+will be. Also not pinned: the ring member keys the capture fetched, because only
+the offsets reach the bytes.
+
+The daemon sentence that led to a real fix is here too, one commit earlier in
+spirit: the first submission was refused with `Sanity check failed` because
+Bulletproofs aggregate and the writer was writing one proof per output.
