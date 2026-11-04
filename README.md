@@ -298,9 +298,14 @@ hash meets. And a chain is priced by its TOTAL work, not one header: each
 header's target is turned into expected hashes (`2^256/(target+1)`, the standard
 form) and summed, the total rides back on the walk's array as a non-enumerable
 `work`, and an optional `minWork` floor refuses a chain the peer could have
-invented cheaply by naming an easy target on every block. What remains
-unverified is fork choice: two chains that both clear the floor are both
-accepted, and nothing here picks the heavier one between them.
+invented cheaply by naming an easy target on every block. Fork choice is now a
+primitive: when peers name DIFFERENT tips, `fork.js` prices each tip's chain
+and `chooseTip` returns the heavier one — the peers serving it, and the
+candidates, go with it. An exact-work tie between distinct tips is refused
+rather than broken. It is opt-in (`scanBack` with `forkChoice: true`); the
+default path still uses exact `agreedTip`. What remains is that no caller is
+forced onto it, and the winner's height rides on the peer's claim like every
+other height here.
 
 Header-first walking is built, and it is not wired. `walkHeadersForward` counts
 forward from an anchor, checking every link; `scanHeaderFirst` fetches a body
@@ -324,8 +329,10 @@ The walk was the open door, because its tip hash is peer-supplied: a peer could
 hand over a tip of its own making, and every link after it would check out. When
 a `pool` and a client are given and the caller pins no tip, the tip itself is
 now agreed by two peers (`peers.agreedTip`) before the walk starts, so a lone
-peer no longer chooses the whole answer. Deciding which fork is the real one is
-still not in this build.
+peer no longer chooses the whole answer; and when the peers disagree on the tip,
+an opt-in `forkChoice` lets the HEAVIER chain win instead of refusing. Deciding
+which fork is the real one is still a judgement, but it is now the heaviest-work
+judgement rather than no judgement at all.
 
 ### What has gone wrong here
 

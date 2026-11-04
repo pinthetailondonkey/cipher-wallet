@@ -50,6 +50,7 @@ import { matchesFilter } from './filters.js';
 import { verifyBlockBody } from './merkle.js';
 import { blockHash as hashOfBlock, walkBack, walkHeadersForward } from './chain.js';
 import { verifiedFilter, agreedTip } from './peers.js';
+import { chooseTip } from './fork.js';
 
 function sameBytes(a, b) {
   if (a.length !== b.length) return false;
@@ -98,7 +99,17 @@ function isCoinbaseInput(input) {
 //
 // `client` has the peerClient.js shape: fetchFilter(peer, hash, opts) and
 // fetchBlock(peer, hash). It is only consulted when a pool is given.
-export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, client = null, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [], minWork } = {}) {
+//
+// FORK CHOICE is opt-in and off by default, because it changes which tip is
+// walked when peers disagree. When `forkChoice` is true, a pool and client are
+// given, the caller pinned no `tipHash`, and the client can `fetchTip`, the tip
+// is chosen by forks.chooseTip instead of peers.agreedTip: two peers on
+// opposite sides of a fork are not a refusal anymore, the HEAVIER chain wins,
+// and only an exact-work tie between distinct tips is still refused. `forkDepth`
+// bounds how far back each candidate tip is priced. With `forkChoice` false the
+// behaviour is byte-identical to before, so existing callers and their tests
+// are unchanged.
+export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, client = null, tipHash, tipHeight, stopHash = null, maxSteps = 1000, scripts = [], minWork, forkChoice = false, forkDepth = 10 } = {}) {
   if (pool && (!client || typeof client.fetchFilter !== 'function' || typeof client.fetchBlock !== 'function')) {
     // Say so rather than quietly falling back to the lone `fetchFilter`: a
     // caller who asked for a quorum must not get one peer's word.
@@ -114,17 +125,32 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
   const outputsSeen = new Map();
   let unresolved = 0;
 
+  // A tip hash is the walk's starting claim, and one peer's word is not a
+  // witness. When a pool and a client are present and the caller pinned no
+  // tip, the pool decides the tip. `forkChoice` picks the heavier of the peers'
+  // tips (chooseTip); otherwise two peers must name the SAME tip (agreedTip).
+  // Passing a `tipHash` is still the deliberate override over both. Without a
+  // pool, this is exactly the old behaviour: the caller's tip or walkBack's own
+  // refusal.
+  const pooledTip = pool && client && (tipHash === undefined || tipHash === null) && typeof client.fetchTip === 'function';
+  let startTipHash = tipHash;
+  let startTipHeight = tipHeight;
+  if (pooledTip && forkChoice) {
+    const chosen = await chooseTip(pool, client, { depth: forkDepth });
+    startTipHash = chosen.hash;
+    // The chosen tip's height is a claim the winning peer made; when the caller
+    // pinned none, use it, or the walk would number the winner's blocks from a
+    // height belonging to a different tip.
+    if (startTipHeight === undefined || startTipHeight === null) startTipHeight = chosen.height;
+  } else if (pooledTip) {
+    startTipHash = (await agreedTip(pool, client.fetchTip)).hash;
+  }
+
   const blocks = await walkBack({
     fetchBlock,
     peer,
-    // A tip hash is the walk's starting claim, and one peer's word is not a
-    // witness. When a pool and a client are present and the caller pinned no
-    // tip, two peers must name the same tip before it is used; otherwise this
-    // is exactly the old behaviour, the caller's tip or walkBack's own refusal.
-    tipHash: (pool && client && (tipHash === undefined || tipHash === null) && typeof client.fetchTip === 'function')
-      ? (await agreedTip(pool, client.fetchTip)).hash
-      : tipHash,
-    tipHeight,
+    tipHash: startTipHash,
+    tipHeight: startTipHeight,
     stopHash,
     maxSteps,
     // A chain is priced by its total work, not one header. Forwarded straight to
