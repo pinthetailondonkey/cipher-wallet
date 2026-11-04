@@ -49,6 +49,7 @@
 import { matchesFilter } from './filters.js';
 import { verifyBlockBody } from './merkle.js';
 import { blockHash as hashOfBlock, walkBack, walkHeadersForward } from './chain.js';
+import { parseTx } from './tx.js';
 import { verifiedFilter, agreedTip } from './peers.js';
 import { chooseTip } from './fork.js';
 
@@ -123,6 +124,7 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
   const spent = [];
   const quiet = [];
   const outputsSeen = new Map();
+  const prevScriptCache = new Map();
   let unresolved = 0;
 
   // A tip hash is the walk's starting claim, and one peer's word is not a
@@ -170,14 +172,33 @@ export async function scanBack({ fetchFilter, fetchBlock, peer, pool = null, cli
     // Verification rebuilds the filter from the block, which needs the scripts
     // this block's inputs spend. Every spend into an earlier walked block was
     // indexed above (forwards is the only order that makes that knowable), so
-    // it is handed over. A spend of older money outside the walk cannot be
-    // rebuilt and is a refusal, not a false `false` — same honesty as `unresolved`.
+    // it is handed over ready. A spend of older money outside the walk cannot
+    // be rebuilt from what the walk holds — but the input names the previous
+    // tx, and a basic filter describes what that tx PAID, so when the client
+    // can `fetchTx` the scripts are fetched once (cached by txid) and the
+    // verification stays exact instead of refusing every block that spends old
+    // money. Without `client.fetchTx` the old behaviour holds: such a block is
+    // a refusal, not a false `false`.
     const prevScripts = [];
+    const outsideSpends = [];
     for (const tx of body.transactions) {
       for (const input of tx.inputs) {
         if (isCoinbaseInput(input)) continue;
         const output = outputsSeen.get(input.txid)?.[input.vout];
         if (output) prevScripts.push(output.script);
+        else outsideSpends.push(input);
+      }
+    }
+    if (pool && outsideSpends.length > 0 && typeof client?.fetchTx === 'function') {
+      for (const spend of outsideSpends) {
+        let outs = prevScriptCache.get(spend.txid);
+        if (!outs) {
+          const { bytes } = await client.fetchTx(peer, spend.txid);
+          outs = parseTx(bytes).outputs.map((output) => output.script);
+          prevScriptCache.set(spend.txid, outs);
+        }
+        const script = outs[spend.vout];
+        if (script) prevScripts.push(script);
       }
     }
     const { filter } = pool

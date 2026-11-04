@@ -33,6 +33,7 @@ import {
   encodeGetHeaders,
   encodeVersion,
   frame,
+  MSG_WITNESS_TX,
 } from './wire.js';
 
 // The reader must be able to hold any frame the wire will accept: one payload
@@ -295,7 +296,27 @@ export function createPeerClient({ connect, network = 'mainnet', timeoutMs = DEF
     });
   }
 
-  return { fetchFilter, fetchBlock, fetchHeaders, fetchFilterHeaders };
+  // Ask for one transaction's bytes by its txid. Needed when a scanned block
+  // spends an output from before the walk: rebuilding that block's filter needs
+  // the spent output's script, which lives in this transaction. The bytes are
+  // returned unparsed; a wrong script shows up as a filter mismatch, not a
+  // believed value.
+  async function fetchTx(peer, txHash) {
+    const asked = normalizeHash(txHash);
+    return withSession(peer, async (session) => {
+      if ((session.remote.services & NODE_NETWORK) === 0n) {
+        throw new Error('That peer does not say it serves the whole chain, so it is not asked for a transaction.');
+      }
+      session.send('getdata', encodeGetData({ type: MSG_WITNESS_TX, hash: asked }));
+      for (;;) {
+        const message = await session.nextAnswer();
+        if (message.command !== 'tx') continue;
+        return { bytes: message.payload };
+      }
+    });
+  }
+
+  return { fetchFilter, fetchBlock, fetchTx, fetchHeaders, fetchFilterHeaders };
 }
 
 // The framing a loopback peer needs to speak, exported so the drill does not

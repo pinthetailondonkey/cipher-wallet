@@ -345,6 +345,9 @@ export function encodeCompactSize(value) {
 
 export const PROTOCOL_VERSION = 70016;
 export const MSG_WITNESS_BLOCK = 0x40000002;
+// A raw transaction, witness-carrying form. Asked for by txid when a scanned
+// block spends an output from before the walk and its filter must be rebuilt.
+export const MSG_WITNESS_TX = 0x40000001;
 
 // The two service bits this wallet needs a peer to claim, and both now have a
 // reader: NODE_NETWORK ("serves the full chain") is checked before a block is
