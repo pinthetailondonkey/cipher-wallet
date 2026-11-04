@@ -974,3 +974,82 @@ is unverified and the tip is peer-supplied (silent wrong answer -> shipped goods
 refused record); (3) the unassembled app and 20 test-only modules (no door a user can walk through);
 (4) four false README sentences; (5) the latent `hashToScalar` hex defect; (6) three guards no test
 watches.
+
+## 2026-11-04 — the four ordered defects fixed, at HEAD (lane A, coordinator)
+
+Adjudicator: lane A. Base for the fixes: 424608c (the full-app adjudication above).
+Each fix is a separate commit; every verdict below was re-derived by execution, not
+read from the commit message. Gate re-run at HEAD by me, off the clean tree:
+
+    npm test        -> 1..701, tests 701, pass 701, fail 0 (32.9s)
+    npm run build   -> build: 35 modules resolved
+    npm run lint    -> 0 errors, 15 warnings (108 files)
+
+### (1) single peer can invent/hide — quorum wired, work checked, tip agreed
+
+- **Wiring — commit 2ce6473, VERIFIED.** `scanBack` gained optional `pool`/`client`.
+  With a pool, every block's filter comes from `peers.verifiedFilter` (two peers
+  agree AND the filter is rebuilt from the block). Own re-run of
+  `test/quorum-scan.test.mjs`: 6/6, including a 2-of-3 pool over a liar (the lie is
+  discarded) and a one-peer pool refused ("One peer is not a witness"). No-pool
+  path unchanged: the same file pins the old single-peer behaviour.
+- **Work — commit 1ac38ff, VERIFIED.** `src/work.js` decodes compact nBits to a
+  256-bit target (sign bit and zero target refused by name) and `walkBack` /
+  `walkHeadersForward` refuse a header whose double-sha256 is above its own target.
+  Own probe: `targetFromBits(0x1d00ffff)` = `ffff` + 24 zero bytes; a header with
+  bits `0x03000000` refused; the mainnet genesis header meets its target. Synthetic
+  headers are stamped with a real easy target and a ground nonce.
+- **Tip — commit 1ac38ff, VERIFIED.** `peers.agreedTip` requires MIN_AGREEMENT
+  peers to name the same tip; `scanBack` uses it when a pool + client are given and
+  the caller pinned no tip. `test/tip-agree.test.mjs` 6/6: agreement walked, a liar
+  refused, no-`fetchTip` falls back, a pinned tip wins.
+
+### (2) concurrent receive.issue shares an address — commit c2021b6, VERIFIED
+
+`store.issueNext(build)` reads the handle, derives, and writes pocket+handle in ONE
+`serialized()` turn (no nested queue). Own probe on a 5ms-latency kv: two concurrent
+`receive.issue()` -> indexes 0 and 1, distinct addresses, both `record()` accepted
+(the audit's exact failure, now passing). `test/receive-concurrency.test.mjs` 6/6.
+
+### (3) unassembled app — commit b7636f9, VERIFIED
+
+`src/index.js` `createWallet` imports BOTH halves (btc `receive`/`spend`/`blockScan`
+and monero `pocket`/`scanFromNode`/`ownOutputs`), and `package.json` gains
+`main`/`exports`. `import('cipher-wallet')` resolves to it; `createWallet` is a
+function. `test/entry.test.mjs` 10/10. Still unjoined and stated in the header: no
+transport is constructed, and a scan finding is returned not persisted.
+
+### (4) four false README sentences — commits a7626a7, 9f7537e, 7b80cf2, VERIFIED
+
+F-1 (amounts "do not decrypt"), F-2 ("the scan wired to a block walk" not built),
+F-3 ("every real miner transaction is version 2"), F-4 (IDB "exercised by the UI
+layer") corrected against the code, plus the opening "Phases 0 to 2 complete" and
+the reachability sentence.
+
+### (5) latent hashToScalar hex — commit 9d3322a, VERIFIED
+
+`hashToScalar` reads an even-length hex string as its bytes and refuses a non-hex
+string by name; array-like and null unchanged. Own probe: `hashToScalar('aabb')`
+now equals the byte input (the old `4a078e76…` is gone).
+
+### (6) three guards no test watched — commit 9d3322a, VERIFIED
+
+Witnessed and mutation-confirmed: `keys.viewSecretFromSpend` length (own mutation:
+dropping the guard -> 22 pass / 1 FAIL), `keys.numberToBytesLE` "does not fit", and
+`ringct.commitmentOf` zero branches.
+
+### Verdicts stamped
+
+- (1) VERIFIED, PARTIAL on scope: total work / fork choice is still not checked.
+- (2) VERIFIED. (3) VERIFIED. (4) VERIFIED. (5) VERIFIED. (6) VERIFIED.
+
+### Residuals, none blocking, all named in README
+
+- Pooled scan re-fetches each block inside `verifiedFilter` while the walk already
+  holds the bytes; a spend from outside the walked range leaves `prevScripts`
+  incomplete, so the pooled path refuses that block (honest, mirrors `unresolved`).
+- `scanHeaderFirst` still takes a single peer.
+- `PUBLIC_NODES` still ships empty; total work and fork choice are not decided.
+
+One word: the parts now meet, a single peer no longer decides the answer alone, and
+it still says exactly which chain questions it has not answered.
