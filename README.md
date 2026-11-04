@@ -3,14 +3,16 @@
 A privacy wallet. One root secret, a fresh pocket per payment, and a spend that
 never needs a custodian and never needs a node you run.
 
-This repo is Phases 0 to 2 complete, and Phase 3 part-built: the units, the
-root and pocket derivation, the vault, the receive path, the Bitcoin spend path,
-and the Monero keys, base58, address encoding, block and transaction reading
-(pinned to real mainnet bytes with provenance), the block walk (every transaction
-id proven against the block's own hash list, the tree root re-proven from the
-proven ids), the transaction fetch client (getTransactions with named refusals),
-and the capture tooling (pin-tx.mjs: one command from node + height + index to
-a pinned fixture). There is no Monero transaction building, no merging, no
+This repo is a set of well-tested parts with one entry point (`src/index.js`)
+that assembles them: the units, the root and pocket derivation, the vault, the
+receive path, the Bitcoin spend path, and the Monero keys, base58, address
+encoding, block and transaction reading (pinned to real mainnet bytes with
+provenance), the block walk (every transaction id proven against the block's own
+hash list, the tree root re-proven from the proven ids), the transaction fetch
+client (getTransactions with named refusals), and the capture tooling
+(pin-tx.mjs: one command from node + height + index to a pinned fixture). The
+entry point is a seam, not a UI: it wires what exists and refuses to pretend the
+missing parts are there. There is no Monero transaction building, no merging, no
 recovery shards, and nothing here has been run against real money.
 
 ### What is still open on the Monero read path
