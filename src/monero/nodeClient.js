@@ -42,9 +42,10 @@ export const MAX_HEIGHT = 0xffffffff;
 // a pool no longer gets an unchecked call, it gets the environment's answer.
 //
 // When the environment names nothing, the caller has still named ONE node in
-// the call itself, so the pin is that node. This is deliberately not a default
-// node and not a fetched list: it is the one address the caller wrote down, and
-// a one-node pool can only ever assert against the node it was built from.
+// the call itself, so the pin is that node. The shipped list is not consulted
+// here: it is chosen a level up, by index.resolveNode, and passed down as the
+// node, so a one-node pinned pool can only ever assert against the node the
+// caller (or the wallet's own resolve step) wrote down.
 //
 // The named "nothing configured" refusal still belongs to createNodePool, and
 // it is still what nodeSourceFromEnv() throws when a scan asks the wallet to
@@ -110,12 +111,15 @@ function configuredPool(env) {
 
 function poolFor(pool, node, env) {
   if (pool) return pool;
-  try {
-    return configuredPool(env);
-  } catch (error) {
-    if (error.code !== 'NO_NODE_CONFIGURED') throw error;
-    return createPinnedPool(node);
-  }
+  // The environment OVERRIDE is the wallet's own choice and is enforced: a
+  // caller that passed a different node is refused rather than silently
+  // talking to the wrong one. With no override, the caller has named one node
+  // in the call itself and that is the pin — the shipped list is chosen one
+  // level up (index.resolveNode), which passes the chosen node here, so the
+  // door never invents a node of its own.
+  const key = env === undefined ? envKey(globalThis.process?.env) : envKey(env);
+  if (key) return configuredPool(env);
+  return createPinnedPool(node);
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;

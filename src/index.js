@@ -47,7 +47,7 @@ import { moneroPocket, DEFAULT_NETWORK as DEFAULT_XMR_NETWORK } from './monero/p
 import { scanBlockFromNode } from './monero/scanFromNode.js';
 import { ownOutputsInBlock } from './monero/ownOutputs.js';
 import { createHandle, nextIndexFor } from './payHandle.js';
-import { nodeOverride } from './monero/nodes.js';
+import { nodeSourceFromEnv } from './monero/nodes.js';
 
 const DEFAULT_BTC_NETWORK = 'bc';
 
@@ -74,6 +74,7 @@ export function createWallet({
   connect = null,
   peerNetwork = 'mainnet',
   fetchImpl,
+  env = globalThis.process?.env,
 } = {}) {
   if (!(seed instanceof Uint8Array) || seed.length === 0) {
     throw new Error('A wallet is built from the root seed bytes.');
@@ -275,9 +276,12 @@ export function createWallet({
   }
 
   // Which one node this scan talks to. A monero node pool (or the shared
-  // `pool`) picks and stays sticky; an explicit node wins; the CIPHER_XMR_NODE
-  // door is the last resort. A peer pool can stand in for `pool`: its pick()
-  // returns endpoints, which are turned back into host:port.
+  // `pool`) picks and stays sticky; an explicit node wins; otherwise the node
+  // door is `nodeSourceFromEnv`, which reads CIPHER_XMR_NODE and otherwise
+  // falls to the shipped list. That pool is built once so the choice is sticky
+  // across scans. A peer pool can stand in for `pool`: its pick() returns
+  // endpoints, which are turned back into host:port.
+  let walletNodePool = null;
   function resolveNode() {
     const chosenPool = moneroPool ?? pool;
     if (chosenPool && typeof chosenPool.pick === 'function') {
@@ -288,9 +292,8 @@ export function createWallet({
       if (first && first.host) return `${first.host}:${first.port}`;
     }
     if (node) return String(node).trim().toLowerCase();
-    const fromEnv = nodeOverride();
-    if (fromEnv) return fromEnv;
-    throw new Error('This wallet has no Monero node: pass one, pass a pool, or set CIPHER_XMR_NODE.');
+    if (!walletNodePool) walletNodePool = nodeSourceFromEnv({ env });
+    return walletNodePool.pick();
   }
 
   const monero = {

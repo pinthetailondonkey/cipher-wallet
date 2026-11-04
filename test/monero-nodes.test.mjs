@@ -18,12 +18,14 @@ function witness(name, ...values) {
   console.log(`[nodes] ${name}: ${values.join(' | ')}`);
 }
 
-test('the shipped list is empty until the founder names addresses, and an empty pool refuses out loud', () => {
-  assert.deepEqual(PUBLIC_NODES, []);
-  assert.throws(() => createNodePool(), /No Monero node is configured/);
-  // And the refusal is a read failure, not a statement about money.
-  assert.throws(() => createNodePool(), (error) => !/payment/i.test(error.message));
-  witness('empty pool', 'refused', 'no payment sentence');
+test('the shipped list carries the live-verified row, and a truly empty pool refuses out loud', () => {
+  assert.deepEqual(PUBLIC_NODES, [{ address: 'xmr-node.cakewallet.com:18081', allowClearnet: true }]);
+  // The row is clearnet, so it must carry its own allowance (else clean() refuses it).
+  assert.equal(createNodePool().pick(), 'xmr-node.cakewallet.com:18081');
+  // And a pool with genuinely no rows still refuses, as a read failure.
+  assert.throws(() => createNodePool({ nodes: [] }), /No Monero node is configured/);
+  assert.throws(() => createNodePool({ nodes: [] }), (error) => !/payment/i.test(error.message));
+  witness('shipped row + empty pool', 'row picked', 'empty refused, no payment sentence');
 });
 
 test('a private override is the only node, even when a list is configured', () => {
@@ -68,7 +70,7 @@ test('when every node has failed the wallet says so, and never says "no payment"
 // already right, and the second would keep retrying a list that is empty.
 test('"nothing configured" and "everything failed" are two different sentences', () => {
   let none = '';
-  try { createNodePool(); } catch (error) { none = error.message; }
+  try { createNodePool({ nodes: [] }); } catch (error) { none = error.message; }
   const pool = createNodePool({ nodes: [ONION_NODE] });
   pool.abandon(pool.pick());
   let failed = '';

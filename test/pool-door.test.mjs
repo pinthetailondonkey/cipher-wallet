@@ -386,16 +386,16 @@ test('O1: with CIPHER_XMR_NODE set, a no-pool door call reaches that node', asyn
   console.log('[pool-door] configured env reached:', calls[0]);
 });
 
-test('O1: with nothing configured, asking the wallet to choose is the named refusal, 0 calls', async () => {
+test('O1: with an empty list, asking the wallet to choose is the named refusal, 0 calls', async () => {
   // The doors themselves take the caller's node as the pin (see the pinned-pool
-  // test above). The wallet's own choice, with no environment and an empty
-  // shipped list, is the refusal createNodePool owns - and it happens before
-  // any transport exists, so there is nothing to call.
+  // test above). The wallet's own choice with an EMPTY list is the refusal
+  // createNodePool owns - and it happens before any transport exists, so there
+  // is nothing to call. (With the shipped row, the same call would return it.)
   const calls = [];
   const before = calls.length;
   await assert.rejects(async () => {
     const { nodeSourceFromEnv } = await import('../src/monero/nodes.js');
-    return nodeSourceFromEnv({ env: {} }).pick();
+    return nodeSourceFromEnv({ env: {}, nodes: [] }).pick();
   }, /No Monero node is configured on this wallet/);
   assert.equal(calls.length, before, 'no transport was touched');
   console.log('[pool-door] nothing configured: named refusal, 0 calls');

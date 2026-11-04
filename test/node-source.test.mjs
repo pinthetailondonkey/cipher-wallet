@@ -29,13 +29,14 @@ test('the variable is named once, and the reader reads that name', () => {
   witness('name', OVERRIDE_ENV);
 });
 
-test('unset, empty and whitespace-only all mean "nothing configured"', () => {
+test('unset, empty and whitespace-only all mean "no override", so the shipped list is used', () => {
   for (const env of [{}, { [OVERRIDE_ENV]: '' }, { [OVERRIDE_ENV]: '   ' }, null]) {
     assert.equal(nodeOverride(env), '', `env=${JSON.stringify(env)}`);
   }
-  // and the pool refuses a scan by name rather than inventing a node
-  assert.throws(() => nodeSourceFromEnv({ env: {} }), /No Monero node is configured/);
-  witness('unset', 'empty', 'whitespace', 'all refused by name');
+  // With no override the shipped list answers; only a list with no rows refuses.
+  assert.equal(nodeSourceFromEnv({ env: {} }).pick(), 'xmr-node.cakewallet.com:18081');
+  assert.throws(() => nodeSourceFromEnv({ env: {}, nodes: [] }), /No Monero node is configured/);
+  witness('unset', 'empty', 'whitespace', 'shipped list used; empty list refused');
 });
 
 test('the value is read at call time, so setting it changes the next scan', () => {
@@ -44,9 +45,9 @@ test('the value is read at call time, so setting it changes the next scan', () =
   env[OVERRIDE_ENV] = ONION_NODE;
   assert.equal(nodeOverride(env), ONION_NODE);
   assert.deepEqual(nodeSourceFromEnv({ env }).nodes, [ONION_NODE]);
-  // and clearing it again returns the wallet to "nothing configured"
+  // and clearing it returns the wallet to the shipped list, not to nothing
   delete env[OVERRIDE_ENV];
-  assert.throws(() => nodeSourceFromEnv({ env }), /No Monero node is configured/);
+  assert.deepEqual(nodeSourceFromEnv({ env }).nodes, ['xmr-node.cakewallet.com:18081']);
   witness('call time', 'set/unset changes without a re-import');
 });
 
@@ -70,13 +71,15 @@ test('without an override the shipped list is what the scan uses', () => {
   witness('list', 'used when no override');
 });
 
-test('the shipped list ships empty, so a wallet with no environment refuses out loud', () => {
-  assert.deepEqual(PUBLIC_NODES, []);
+test('the shipped list carries a live-verified row, so a no-environment wallet has a node', () => {
+  assert.deepEqual(PUBLIC_NODES, [{ address: 'xmr-node.cakewallet.com:18081', allowClearnet: true }]);
+  assert.equal(nodeSourceFromEnv({ env: {} }).pick(), 'xmr-node.cakewallet.com:18081');
+  // and only a genuinely empty list refuses out loud, as a read failure
   assert.throws(
-    () => nodeSourceFromEnv({ env: {} }),
+    () => nodeSourceFromEnv({ env: {}, nodes: [] }),
     (error) => /No Monero node is configured/.test(error.message) && !/payment/i.test(error.message),
   );
-  witness('shipped empty', 'refused', 'no payment sentence');
+  witness('shipped row', 'used with no environment', 'empty list refuses');
 });
 
 test("the override is the person's own address, so it carries its clearnet allowance", () => {

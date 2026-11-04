@@ -229,3 +229,39 @@ test('monero.scan() proves a block from a stubbed node and reports an honest emp
   assert.equal(out.transactionsScanned, 1, 'the miner transaction, and nothing else');
   assert.deepEqual(out.outputs, [], 'the pinned block pays a stranger');
 });
+
+test('with no node, no pool and no override, the wallet uses the shipped node', async () => {
+  // The shipped list used to be empty, so this call refused. It now carries one
+  // live-verified clearnet row, and the wallet's own resolve step is what reads
+  // it. The transport is stubbed, so the assertion is about WHICH node was
+  // chosen, not about the network.
+  const fixture = read('monero-block-mainnet-c.json');
+  const blockHex = unspaced(fixture.block.blob);
+  const hashHex = unspaced(fixture.block.claimedId);
+  const seen = [];
+  const stub = nodeStub({ blockHex, hashHex });
+  const w = buildWallet({ env: {} });
+  await w.issueMonero();
+  const out = await w.monero.scan({
+    hash: hashHex,
+    fetchImpl: async (url, options) => { seen.push(url); return stub(url, options); },
+  });
+  assert.match(seen[0], /xmr-node\.cakewallet\.com:18081/, 'the shipped row is the node asked');
+  assert.equal(out.blockId, hashHex);
+});
+
+test('an override still wins over the shipped row', async () => {
+  const fixture = read('monero-block-mainnet-c.json');
+  const blockHex = unspaced(fixture.block.blob);
+  const hashHex = unspaced(fixture.block.claimedId);
+  const seen = [];
+  const stub = nodeStub({ blockHex, hashHex });
+  const w = buildWallet({ env: { CIPHER_XMR_NODE: 'mine.example:18081' } });
+  await w.issueMonero();
+  await w.monero.scan({
+    hash: hashHex,
+    fetchImpl: async (url, options) => { seen.push(url); return stub(url, options); },
+  });
+  assert.match(seen[0], /mine\.example:18081/, 'the override is the only node');
+  assert.doesNotMatch(seen[0], /cakewallet/);
+});

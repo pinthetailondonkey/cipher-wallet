@@ -21,11 +21,12 @@
 //   discovery, no list downloaded over the network: a fetched list is a stranger
 //   choosing who gets to see this wallet's users.
 //
-// The list ships EMPTY, the same way the messenger's founder doors ship dark:
-// an address this build invented would be a claim about a stranger's server that
-// I cannot verify, and a wallet pointed at the wrong host is worse than a wallet
-// that says it has nowhere to go. Fill it here, by hand, with addresses the
-// founder has named; that is the only way it changes.
+// The list shipped EMPTY for a long time, the same way the messenger's founder
+// doors ship dark: an address this build invented would be a claim about a
+// stranger's server it could not verify. One row is now here because it WAS
+// verified: `get_info` and a full `getBlock`+scan at a live height were run
+// against it on 2026-11-04 (a block was fetched, 59 transactions read). The row
+// is still by hand and still never fetched at runtime.
 //
 // A CLEARNET ROW SAYS SO ON THE ROW. The lane's rule is that no clearnet peer is
 // used without an explicit allowance, so the allowance is written where the
@@ -39,8 +40,10 @@
 // and still have to be written down somewhere a reviewer reads.
 
 export const PUBLIC_NODES = Object.freeze([
-  // An .onion address, by hand: 'nodexxxxxxxx.onion:18081'.
-  // A clearnet one has to carry its allowance on its own row:
+  // Clearnet, live-verified 2026-11-04 (see the note above). Carry the allowance
+  // on the row. An .onion row is a plain string: 'nodexxx.onion:18081'.
+  { address: 'xmr-node.cakewallet.com:18081', allowClearnet: true },
+  // A clearnet row has to carry its own allowance, exactly like this:
   //   { address: 'node.example:18081', allowClearnet: true },
   // Never discovered, never fetched.
 ]);

@@ -123,9 +123,8 @@ nothing about pockets it was never told about.
 - **Restore.** The gap-limit scan is described, not implemented.
 - **Choosing a node.** The rule is built (`src/monero/nodes.js`): one node per
   scan, sticky for the session, an exhausted list is a failed read and never a
-  statement about a payment. The list ships empty and nothing reads
-  `CIPHER_XMR_NODE` yet; `assertCurrent` has no caller until a transport is
-  wired to it.
+  statement about a payment. The list now carries one live-verified clearnet row,
+  and `CIPHER_XMR_NODE` overrides it; `assertCurrent` runs before every socket.
 - **No wallet has been funded, and nothing has touched mainnet.** Passing
   vectors prove the arithmetic matches Monero's; they say nothing about safety
   once real money is involved.

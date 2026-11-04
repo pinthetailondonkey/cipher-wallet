@@ -173,21 +173,24 @@ The transport for reading blocks is ruled: a shipped list of public nodes in
 `src/monero/nodes.js`, with a private node overriding the list when
 `CIPHER_XMR_NODE` is set — one node per scan, sticky, and fail-closed, so a node
 that dies mid-scan refuses the scan rather than stitching two operators together.
-**The list still ships empty**, so a scan has no node to ask until the founder
-names addresses; capture scripts take `CIPHER_XMR_NODE` directly.
+**The list ships one row**, `xmr-node.cakewallet.com:18081`, verified live on
+2026-11-04 (a real block fetched and scanned). So a scan has a node to ask with
+no configuration at all; only a genuinely empty list refuses. The row is clearnet
+and carries its own `allowClearnet` allowance on the row, as the rule requires.
+Capture scripts still take `CIPHER_XMR_NODE` directly.
 
 The variable is read at runtime, and `nodeClient.js` walks that door itself: a
-caller that injects a pool keeps it unchanged, and a caller that injects none is
-resolved against the environment and falls back to the node it named. The
-pinned-node check happens before the socket on every door, never after the
-answer. With no override and no list, the refusal is named at the wallet boundary
-rather than arriving as a socket error.
+caller that injects a pool keeps it unchanged, a caller that sets the variable is
+checked against it, and a caller that injects none and sets nothing pins the one
+node it named. The pinned-node check happens before the socket on every door,
+never after the answer; the wallet's own `resolveNode` is what consults the
+shipped list when there is no node and no override. With no override and no list,
+the refusal is named at the wallet boundary rather than arriving as a socket
+error.
 
-What that leaves open, and it is a real gap: `PUBLIC_NODES` still ships empty, so
-until the founder names addresses every scan needs `CIPHER_XMR_NODE` set or a node
-passed by hand. And a no-pool caller has no scan boundary, so it rotates after an
-abandon where a pool-holding caller would refuse; `state/AUDIT.md` records that as
-a risk.
+What that leaves open: a no-pool caller has no scan boundary, so it rotates after
+an abandon where a pool-holding caller would refuse; `state/AUDIT.md` records that
+as a risk.
 
 ## The vault is two layers
 
