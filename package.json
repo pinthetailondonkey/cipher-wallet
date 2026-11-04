@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Cipher Wallet: a privacy wallet with a rotating receive identity.",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
   "engines": {
     "node": ">=20"
   },
