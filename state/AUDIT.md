@@ -1507,3 +1507,32 @@ does). Fee for the funded lane comes from the node's own get_fee_estimate
 (20000/byte slow tier when measured), not a constant.
 
 Gate at HEAD: fund-input + own-outputs green (15/15 affected), lint clean.
+
+### 23:45Z check — local sync still far from usable; interim findings logged
+
+Local node height 89,453 of 2,243,705 (~4%), rate ~600 blocks/10min with
+sub-100%-duty pauses; ETA many hours. Honest status: NOT yet at the point where
+outputs 10148k+ resolve locally.
+
+Two real findings from this wait, both from source + live logs:
+
+1. THE EMPTY REASON MYSTERY WAS PARTLY STRUCTURAL. In v0.18 every failing input
+   check inside Blockchain::check_tx_inputs reports ONLY via MERROR_VER, which is
+   category `verify` at ERROR level, and daemon default log level 1 filters to
+   FATAL-only for verify, so nodes stay silent by construction while their answer
+   carries only bare flags (invalid_input=true, reason:""). We now run the local
+   node with *:INFO plus verify:DEBUG and will read the named sentence when its
+   DB can actually serve output keys.
+2. LOCAL "refusals" WHILE SYNCING ARE PROXY ECHOES, NOT LOCAL VERDICTS. With a
+   bootstrap daemon configured and `m_should_use_bootstrap_daemon` true
+   (top_height + 10 < bootstrap height), send_raw_transaction FIRST tries the
+   proxy call to the remote /sendrawtransaction and, on any non-OK status,
+   `Failing RPC /sendrawtransaction due to peer return status Failed` is logged
+   and res.status stays whatever the REMOTE said. Only when that path falls
+   through does CHECK_CORE_READY gate on is_synchronized() -> Busy. So mid-sync
+   submissions against the local node are not local verdicts at all; they cannot
+   be used as evidence about our bytes. Today's repeated same-hex submits onto
+   it were therefore pointless, and each one also burns pool cache entries
+   upstream in m_input_cache. Actual acceptance criteria unchanged: keep
+   syncing until is_synchronized flips true, then submit ONCE and read verify:
+   DEBUG lines.
