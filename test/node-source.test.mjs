@@ -19,6 +19,8 @@ import {
 const ONION = `${'abcdefghij'.repeat(5)}abcdef`.slice(0, 56) + '.onion';
 const ONION_NODE = `${ONION}:18081`;
 
+const SHIPPED_ROWS = ['xmr-node.cakewallet.com:18081', 'nodes.hashvault.pro:18081'];
+
 function witness(name, ...values) {
   console.log(`[node-source] ${name}: ${values.join(' | ')}`);
 }
@@ -47,7 +49,7 @@ test('the value is read at call time, so setting it changes the next scan', () =
   assert.deepEqual(nodeSourceFromEnv({ env }).nodes, [ONION_NODE]);
   // and clearing it returns the wallet to the shipped list, not to nothing
   delete env[OVERRIDE_ENV];
-  assert.deepEqual(nodeSourceFromEnv({ env }).nodes, ['xmr-node.cakewallet.com:18081']);
+  assert.deepEqual(nodeSourceFromEnv({ env }).nodes, SHIPPED_ROWS);
   witness('call time', 'set/unset changes without a re-import');
 });
 
@@ -71,8 +73,11 @@ test('without an override the shipped list is what the scan uses', () => {
   witness('list', 'used when no override');
 });
 
-test('the shipped list carries a live-verified row, so a no-environment wallet has a node', () => {
-  assert.deepEqual(PUBLIC_NODES, [{ address: 'xmr-node.cakewallet.com:18081', allowClearnet: true }]);
+test('the shipped list carries live-verified rows, so a no-environment wallet has a node', () => {
+  assert.deepEqual(PUBLIC_NODES, [
+    { address: 'xmr-node.cakewallet.com:18081', allowClearnet: true },
+    { address: 'nodes.hashvault.pro:18081', allowClearnet: true },
+  ]);
   assert.equal(nodeSourceFromEnv({ env: {} }).pick(), 'xmr-node.cakewallet.com:18081');
   // and only a genuinely empty list refuses out loud, as a read failure
   assert.throws(

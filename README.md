@@ -173,11 +173,13 @@ The transport for reading blocks is ruled: a shipped list of public nodes in
 `src/monero/nodes.js`, with a private node overriding the list when
 `CIPHER_XMR_NODE` is set — one node per scan, sticky, and fail-closed, so a node
 that dies mid-scan refuses the scan rather than stitching two operators together.
-**The list ships one row**, `xmr-node.cakewallet.com:18081`, verified live on
-2026-11-04 (a real block fetched and scanned). So a scan has a node to ask with
-no configuration at all; only a genuinely empty list refuses. The row is clearnet
-and carries its own `allowClearnet` allowance on the row, as the rule requires.
-Capture scripts still take `CIPHER_XMR_NODE` directly.
+**The list ships two rows**, `xmr-node.cakewallet.com:18081` and
+`nodes.hashvault.pro:18081`, both verified live on 2026-11-04 (a real block
+fetched and scanned). So a scan has a node to ask with no configuration at all,
+and a failed read moves the wallet to the next row for the next scan rather than
+staying on a dead host; only a genuinely empty list refuses. The rows are clearnet
+and each carries its own `allowClearnet` allowance on the row, as the rule
+requires. Capture scripts still take `CIPHER_XMR_NODE` directly.
 
 The variable is read at runtime, and `nodeClient.js` walks that door itself: a
 caller that injects a pool keeps it unchanged, a caller that sets the variable is

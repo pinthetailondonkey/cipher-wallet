@@ -265,3 +265,28 @@ test('an override still wins over the shipped row', async () => {
   assert.match(seen[0], /mine\.example:18081/, 'the override is the only node');
   assert.doesNotMatch(seen[0], /cakewallet/);
 });
+
+test('a failed read rotates to the next shipped node, and the scan after it succeeds', async () => {
+  // The shipped list has two rows. A dead first node must not pin the wallet
+  // forever: the failure abandons it and the NEXT scan starts on the next row.
+  const fixture = read('monero-block-mainnet-c.json');
+  const blockHex = unspaced(fixture.block.blob);
+  const hashHex = unspaced(fixture.block.claimedId);
+  const stub = nodeStub({ blockHex, hashHex });
+  const seen = [];
+  const w = buildWallet({ env: {} });
+  await w.issueMonero();
+
+  const fetchImpl = async (url, options) => {
+    seen.push(url);
+    if (url.includes('cakewallet')) throw new Error('ECONNREFUSED');
+    return stub(url, options);
+  };
+
+  await assert.rejects(w.monero.scan({ hash: hashHex, fetchImpl }), /ECONNREFUSED|cakewallet/);
+  const out = await w.monero.scan({ hash: hashHex, fetchImpl });
+
+  assert.match(seen[0], /cakewallet/, 'first scan used the first row');
+  assert.match(seen.at(-1), /hashvault/, 'the next scan moved off the dead node');
+  assert.equal(out.blockId, hashHex, 'and read a block from the second node');
+});

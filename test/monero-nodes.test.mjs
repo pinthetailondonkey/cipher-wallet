@@ -19,8 +19,11 @@ function witness(name, ...values) {
 }
 
 test('the shipped list carries the live-verified row, and a truly empty pool refuses out loud', () => {
-  assert.deepEqual(PUBLIC_NODES, [{ address: 'xmr-node.cakewallet.com:18081', allowClearnet: true }]);
-  // The row is clearnet, so it must carry its own allowance (else clean() refuses it).
+  assert.deepEqual(PUBLIC_NODES, [
+    { address: 'xmr-node.cakewallet.com:18081', allowClearnet: true },
+    { address: 'nodes.hashvault.pro:18081', allowClearnet: true },
+  ]);
+  // Each row is clearnet, so each must carry its own allowance (else clean() refuses it).
   assert.equal(createNodePool().pick(), 'xmr-node.cakewallet.com:18081');
   // And a pool with genuinely no rows still refuses, as a read failure.
   assert.throws(() => createNodePool({ nodes: [] }), /No Monero node is configured/);

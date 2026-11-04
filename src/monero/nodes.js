@@ -43,6 +43,10 @@ export const PUBLIC_NODES = Object.freeze([
   // Clearnet, live-verified 2026-11-04 (see the note above). Carry the allowance
   // on the row. An .onion row is a plain string: 'nodexxx.onion:18081'.
   { address: 'xmr-node.cakewallet.com:18081', allowClearnet: true },
+  // The second row exists so a failed read has somewhere to go: the next scan
+  // starts on the next node (nodes.js abandon/rotation). Also live-verified
+  // 2026-11-04 (get_info + block header read).
+  { address: 'nodes.hashvault.pro:18081', allowClearnet: true },
   // A clearnet row has to carry its own allowance, exactly like this:
   //   { address: 'node.example:18081', allowClearnet: true },
   // Never discovered, never fetched.

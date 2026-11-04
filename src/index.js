@@ -282,6 +282,7 @@ export function createWallet({
   // across scans. A peer pool can stand in for `pool`: its pick() returns
   // endpoints, which are turned back into host:port.
   let walletNodePool = null;
+  let walletNodePoolNode = null;
   function resolveNode() {
     const chosenPool = moneroPool ?? pool;
     if (chosenPool && typeof chosenPool.pick === 'function') {
@@ -293,7 +294,16 @@ export function createWallet({
     }
     if (node) return String(node).trim().toLowerCase();
     if (!walletNodePool) walletNodePool = nodeSourceFromEnv({ env });
-    return walletNodePool.pick();
+    walletNodePoolNode = walletNodePool.pick();
+    return walletNodePoolNode;
+  }
+
+  // A failed read is not a finding. When the node came from the wallet's own
+  // pool, the failure moves the session to the NEXT configured node, so the
+  // following scan starts somewhere else rather than on a known-dead host. A
+  // node the caller named (or an injected pool) is not this pool's to rotate.
+  function nodeFailed(nodeAsked) {
+    if (walletNodePool && walletNodePoolNode === nodeAsked) walletNodePool.abandon(nodeAsked);
   }
 
   const monero = {
@@ -307,9 +317,15 @@ export function createWallet({
       const wantedPockets = supplied ?? (indices
         ? indices.map((index) => moneroPocketAt(index))
         : await moneroPockets());
-      return scanBlockFromNode(resolveNode(), {
-        hash, height, pockets: wantedPockets, pool: moneroPool, fetchImpl, ...options,
-      });
+      const chosen = resolveNode();
+      try {
+        return await scanBlockFromNode(chosen, {
+          hash, height, pockets: wantedPockets, pool: moneroPool, fetchImpl, ...options,
+        });
+      } catch (error) {
+        nodeFailed(chosen);
+        throw error;
+      }
     },
     // The proof layer on bytes the caller already holds.
     ownOutputs({ blockBytes, txBytesList, expectHash, trustViewTags, pockets: supplied } = {}) {
