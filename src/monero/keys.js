@@ -189,9 +189,30 @@ export function viewSecretFromSpend(spendSecret) {
 }
 
 // hash_to_scalar: keccak-256 of the data, reduced mod l.
+//
+// A string is read as hex, not as characters. `new Uint8Array('aabb')` is LENGTH
+// 0, because the typed-array constructor applies ToIndex rather than iterating
+// characters, so a hex string used to hash as the empty byte run and come back
+// as a canonical, plausible, wrong scalar. A string that is not an even run of
+// hex digits is refused rather than guessed at. Anything else array-like is
+// read as bytes, as before.
+const HEX_RUN = /^[0-9a-fA-F]*$/;
+
+function hashBytes(data) {
+  if (data instanceof Uint8Array) return data;
+  if (typeof data === 'string') {
+    if (data.length % 2 !== 0 || !HEX_RUN.test(data)) {
+      throw new Error('A hash_to_scalar string is an even run of hex digits.');
+    }
+    const out = new Uint8Array(data.length / 2);
+    for (let i = 0; i < out.length; i += 1) out[i] = parseInt(data.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
+  return new Uint8Array(data ?? []);
+}
+
 export function hashToScalar(data) {
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data ?? []);
-  return scReduce32(keccak_256(bytes));
+  return scReduce32(keccak_256(hashBytes(data)));
 }
 
 // fe_frombytes: read 32 bytes as the field element they denote. Written as the

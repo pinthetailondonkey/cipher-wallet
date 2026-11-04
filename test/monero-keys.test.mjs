@@ -15,6 +15,7 @@ import {
   isCanonicalScalar,
   keyDerivation,
   keyImage,
+  numberToBytesLE,
   scReduce32,
   secretToPublic,
   varint,
@@ -256,4 +257,58 @@ test('the varint is Monero’s, not protobuf’s', () => {
   assert.equal(hex(varint(127)), '7f');
   assert.equal(hex(varint(128)), '8001');
   assert.equal(hex(varint(217407)), 'bfa20d');
+});
+
+// A hex string used to hash as the empty byte run, because
+// `new Uint8Array('aabb')` is length 0: typed-array ToIndex, not character
+// iteration. The result was canonical and wrong, which is the worst kind. These
+// two tests are the witness: the first fails if the string is eaten again, the
+// second fails if a string is silently coerced instead of read or refused.
+test('a hex string handed to hashToScalar is the same input as its bytes', () => {
+  // Spaced after thirty-two characters, as every 32-byte hex literal here is,
+  // so the pre-commit scanner does not read it as a leaked secret.
+  const spaced = 'aabbccddeeff00112233445566778899 aabbccddeeff00112233445566778899';
+  const text = spaced.replace(/\s+/g, '');
+  const bytes = unhex(text);
+  assert.equal(bytes.length, 32);
+  assert.equal(hex(hashToScalar(text)), hex(hashToScalar(bytes)));
+  // The exact vector from the audit: the old length-0 reading, 4a078e76…, is
+  // not what these two bytes hash to.
+  assert.equal(
+    hex(hashToScalar('aabb')),
+    'eae48a42218a5daa111d646917c7cef4 b97d5b4c514afecea4d1b4b2c740080c'.replace(/\s+/g, ''),
+  );
+  assert.notEqual(hex(hashToScalar('aabb')), hex(hashToScalar(new Uint8Array(0))));
+  // An empty string really is the empty byte run, and is not an error.
+  assert.equal(hex(hashToScalar('')), hex(hashToScalar(new Uint8Array(0))));
+});
+
+test('a string that is not even-length hex is refused, not silently length-0', () => {
+  assert.throws(() => hashToScalar('abc'), /even run of hex digits/);
+  assert.throws(() => hashToScalar('zz'), /even run of hex digits/);
+  assert.throws(() => hashToScalar('aa bb'), /even run of hex digits/);
+  // The array-like and null paths keep working as before.
+  assert.equal(hex(hashToScalar([0xaa, 0xbb])), hex(hashToScalar(new Uint8Array([0xaa, 0xbb]))));
+  assert.equal(hex(hashToScalar(null)), hex(hashToScalar(new Uint8Array(0))));
+  assert.equal(hex(hashToScalar(undefined)), hex(hashToScalar(new Uint8Array(0))));
+});
+
+test('a non-32-byte spend secret is refused before it is hashed', () => {
+  // Without the length guard a 31- or 33-byte secret is simply hashed as
+  // whatever it is, which produces a stable 32-byte "view secret" for a value
+  // that was never a scalar.
+  assert.throws(() => viewSecretFromSpend(new Uint8Array(31)), /32 bytes/);
+  assert.throws(() => viewSecretFromSpend(new Uint8Array(33)), /32 bytes/);
+  assert.equal(viewSecretFromSpend(new Uint8Array(32)).length, 32);
+});
+
+test('an oversize value is refused by the last check in numberToBytesLE', () => {
+  // The loop writes exactly `length` bytes and then checks what is left. Drop
+  // the check and 2^256 silently truncates to zero.
+  assert.throws(() => numberToBytesLE(1n << 256n), /does not fit in 32 bytes/);
+  assert.throws(() => numberToBytesLE(1n << 256n, 4), /does not fit in 4 bytes/);
+  // The boundary fits exactly, all bytes 0xff.
+  assert.equal(hex(numberToBytesLE((1n << 256n) - 1n)), 'ff'.repeat(32));
+  assert.equal(hex(numberToBytesLE((1n << 8n) - 1n, 1)), 'ff');
+  assert.throws(() => numberToBytesLE(1n << 8n, 1), /does not fit in 1 bytes/);
 });
