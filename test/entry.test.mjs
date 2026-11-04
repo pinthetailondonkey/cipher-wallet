@@ -24,6 +24,7 @@ import { buildBasicFilter } from '../src/filters.js';
 import { createPeerPool } from '../src/peers.js';
 import { serializeTx, txid, reverseBytes } from '../src/tx.js';
 import { stampWork } from '../src/work.js';
+import { readTransaction, transactionIdOf } from '../src/monero/block.js';
 
 const MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const SEED = rootFromMnemonic(MNEMONIC);
@@ -289,4 +290,30 @@ test('a failed read rotates to the next shipped node, and the scan after it succ
   assert.match(seen[0], /cakewallet/, 'first scan used the first row');
   assert.match(seen.at(-1), /hashvault/, 'the next scan moved off the dead node');
   assert.equal(out.blockId, hashHex, 'and read a block from the second node');
+});
+
+
+test('monero.tx re-encodes a real transaction through the wallet, and reads fields not bytes', () => {
+  // The writing half reached from the entry point, judged on the fixture the
+  // reader is pinned on: parsed by the parser, written back from the FIELDS,
+  // and required to name the same tx_hash. The control is a mutation, because a
+  // writer that echoed the bytes it was handed would pass the first half.
+  const fixture = read('monero-tx-rct-5.json');
+  const bytes = hex.decode(unspaced(fixture.asHex));
+  const txHash = unspaced(fixture.txHash);
+  const parsed = readTransaction(bytes, 0, 'entry fixture transaction');
+  const w = buildWallet();
+
+  const { prefix, base } = w.monero.tx.writeTransaction(parsed);
+  const rebuilt = new Uint8Array([...prefix, ...base, ...parsed.prunableBytes]);
+  assert.deepEqual(rebuilt, bytes, 'prefix || base || prunable is the node\'s own bytes');
+  assert.equal(transactionIdOf(readTransaction(rebuilt, 0, 'rebuilt')), txHash);
+
+  const moved = { ...parsed, outputs: [{ ...parsed.outputs[0], amount: parsed.outputs[0].amount + 1n }, ...parsed.outputs.slice(1)] };
+  const written = w.monero.tx.writeTransaction(moved);
+  assert.notDeepEqual(written.prefix, prefix, 'a changed field changes the written bytes');
+
+  // And a from-scratch framing through the same door: no fixture, no parse.
+  const scratch = w.monero.tx.writeType6Prunable({ inputCount: 1, outputCount: 1, ringSize: 3 });
+  assert.equal(scratch.length, 1 + 32 * 6 + 1 + 32 * 6 + 1 + 32 * 6 + (32 * 3 + 32 + 32) + 32);
 });

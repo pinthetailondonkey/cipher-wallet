@@ -12,7 +12,8 @@ hash list, the tree root re-proven from the proven ids), the transaction fetch
 client (getTransactions with named refusals), and the capture tooling
 (pin-tx.mjs: one command from node + height + index to a pinned fixture). The
 entry point is a seam, not a UI: it wires what exists and refuses to pretend the
-missing parts are there. There is no Monero transaction building, no merging, no
+missing parts are there. There is no Monero spend (its bytes can now be built;
+nothing signs or broadcasts one yet), no merging, no
 recovery shards, and nothing here has been run against real money.
 
 ### What is still open on the Monero read path
@@ -168,10 +169,30 @@ must equal the root the block carries. A block whose bytes and list disagree is
 refused by name. A walk that leaves a byte over is a framing lie and refused.
 The live path runs that whole chain over Tor against a real node.
 
-What is still not built on the Monero side: building and broadcasting a spend.
-The read scan IS wired to the block walk — `ownOutputsInBlock` walks a proven
+What is still not built on the Monero side: the act of spending — selecting a
+ring, computing a key image, making the commitments and the CLSAG signature, and
+broadcasting. The read scan IS wired to the block walk — `ownOutputsInBlock` walks a proven
 block and reads our outputs — and `scanBlockFromNode` is the node driver over
 it. Nothing on the Monero side has been funded or touched mainnet.
+
+**The writing half now exists, and is judged by the same bytes the reading half
+is.** `src/monero/txWriter.js` writes a transaction prefix and a RingCT base
+from fields, plus the type 6 prunable section as framed-but-uncomputed bytes.
+The test is not its own fixture: eleven real mainnet transactions across all six
+RingCT types, and the miner transaction inside every pinned block, are parsed
+then re-encoded, and `prefix || base || prunable` must equal the exact bytes a
+stranger's node served and hash to that node's own `tx_hash`. The prunable's
+scalars stay raw because nothing reads them back yet, and that is stated in the
+module rather than papered over. A from-scratch two-in/two-out type 6
+transaction is built out of nothing and read back whole, so the writer is not
+only a re-encoder. The controls are mutations: nine fields are changed one at a
+time and each must change the written bytes and survive a re-read, because a
+writer that echoed the bytes it was handed would round-trip perfectly and tell
+you nothing. Eight such mutants were run and all were killed, including the one
+that survived the first pass (L and R swapped in the prunable, invisible while
+both vectors are the same length) — the fix was a control with distinct counts.
+So a spend's *encoding* is now proven; what a spend still lacks is the ring
+selection, the key image, the commitments and the CLSAG signature.
 
 The transport for reading blocks is ruled: a shipped list of public nodes in
 `src/monero/nodes.js`, with a private node overriding the list when

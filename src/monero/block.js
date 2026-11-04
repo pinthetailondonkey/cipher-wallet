@@ -223,6 +223,13 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
   // only for other types. Version 1's signatures section writes nothing
   // behind a generated input, so a v1 coinbase ends at its prefix.
   let rctType = null;
+  // The base's two scalar-or-set fields, kept because the writer needs them and
+  // because a parsed transaction that cannot be re-encoded is a model with a
+  // hole in it. `pseudoOuts` is the type 2 base's per-input array, which no
+  // other type writes into the base at all (RCTTypeFull's live in the prunable
+  // section, which this build walks over rather than through).
+  let rctFee = null;
+  const pseudoOutsByInput = [];
   let baseEnd = prefixEnd;
   let prunableEnd = null;
   // The ecdh entry and the commitment belong to an OUTPUT, not to the base, and
@@ -247,7 +254,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       // prunable section is walked below from the bytes, exactly as
       // serialize_rctsig_base and serialize_rctsig_prunable write them.
       rctType = 6;
-      cursor.varint('ringct fee');
+      rctFee = cursor.varint('ringct fee');
       for (let i = 0; i < outputCount; i += 1) ecdhByOutput.push(cursor.take(8, `output ${i} ecdh amount`));
       for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.take(32, `output ${i} commitment`));
       baseEnd = cursor.at;
@@ -266,7 +273,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       // output (32B mask then 32B amount, the pre-Bulletproof2 encoding), then
       // one 32B commitment per output. The prunable is walked below.
       rctType = 3;
-      cursor.varint('ringct fee');
+      rctFee = cursor.varint('ringct fee');
       for (let i = 0; i < outputCount; i += 1) {
         const mask = cursor.take(32, `output ${i} ecdh mask`);
         const amount = cursor.take(32, `output ${i} ecdh amount`);
@@ -291,7 +298,7 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       // only structural difference between them, so one walk takes the shape as
       // an argument rather than being written twice.
       rctType = Number(read);
-      cursor.varint('ringct fee');
+      rctFee = cursor.varint('ringct fee');
       for (let i = 0; i < outputCount; i += 1) ecdhByOutput.push(cursor.take(8, `output ${i} ecdh amount`));
       for (let i = 0; i < outputCount; i += 1) commitmentByOutput.push(cursor.take(32, `output ${i} commitment`));
       baseEnd = cursor.at;
@@ -310,9 +317,9 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
       // serialize_rctsig_base); type 1 carries none, because its single MLSAG
       // signs every input at once.
       rctType = Number(read);
-      cursor.varint('ringct fee');
+      rctFee = cursor.varint('ringct fee');
       if (read === 2n) {
-        for (let i = 0; i < inputCount; i += 1) cursor.take(32, `input ${i} pseudo-output`);
+        for (let i = 0; i < inputCount; i += 1) pseudoOutsByInput.push(cursor.take(32, `input ${i} pseudo-output`));
       }
       for (let i = 0; i < outputCount; i += 1) {
         const mask = cursor.take(32, `output ${i} ecdh mask`);
@@ -374,6 +381,8 @@ export function readTransaction(bytes, at, label = 'miner transaction') {
     coinbase,
     genHeight: coinbase ? inputs[0].height : null,
     rctType,
+    rctFee,
+    pseudoOuts: pseudoOutsByInput,
     start,
     prefixEnd,
     baseEnd,

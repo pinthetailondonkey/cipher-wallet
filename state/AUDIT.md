@@ -1261,3 +1261,34 @@ TESTS: `test/monero-watch.test.mjs` gains a short-refusal/accepted pair and a ro
 stores-its-demand check. Gate at HEAD: 743/743 tests, build 37, lint 0 errors.
 Residual: a live block rarely pays the demo seed, so a recorded row is still
 exercised by tests, not a live hit.
+
+## 2026-11-04 — the writing half of the Monero format (lane A, coordinator)
+
+Base: 50ca59c. Everything under src/monero/ READ the chain; a spend has to WRITE.
+This adds `src/monero/txWriter.js`: `writeTransactionPrefix`, `writeRctBase`
+(all seven types, including the RCTTypeSimple-only pseudoOuts rule and the
+compressed-vs-uncompressed ecdh width), `writeType6Prunable`, and
+`writeTransaction` over an already parsed transaction. The parser now also
+returns `rctFee` and `pseudoOuts`, which it read and threw away: without them
+the base cannot be re-encoded at all.
+
+EVIDENCE, on real bytes and not on a fixture written to match. `test/tx-writer.test.mjs`
+re-encodes eleven pinned mainnet transactions across all six RingCT types and
+the miner transaction inside every pinned block from the PARSED FIELDS, then
+requires prefix || base || prunable to equal the served bytes and to hash to the
+node's own tx_hash. Controls are mutations, nine fields one at a time, each
+must change the written bytes and survive a re-read; eight source mutants were
+run and all killed. One survived the first pass (L and R counts swapped in the
+type 6 prunable, invisible while both vectors are the same length); it is killed
+by a control with lCount 3 / rCount 5 whose offsets are asserted.
+A from-scratch two-in/two-out type 6 transaction is built from nothing and read
+back whole, and `monero.tx` reaches the writer from the entry point with an
+entry test.
+
+LIMITS, stated in the module: the prunable's SCALARS are not computed (zeros, and
+the section is framed only), there is no ring selection, no key image, no
+commitment and no CLSAG. So a spend's encoding is proven; a spend is not.
+
+Gate at HEAD: 847/847 tests, build 38 modules, lint 0 errors (15 warnings).
+Residual: nothing was broadcast, so a real node's acceptance of these bytes is
+still the next witness.

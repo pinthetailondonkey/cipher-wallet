@@ -29,8 +29,10 @@
 //     `record` a finding is returned and forgotten.
 //   - A Bitcoin scan payment is likewise returned, not persisted: the watcher
 //     is the only thing allowed to move a payment, and that separation is kept.
-//   - There is no Monero spend. The xmr rail here is read-only, because no
-//     Monero transaction builder exists in this build.
+//   - There is no Monero spend. The format can be WRITTEN now (`monero.tx`
+//     re-encodes a transaction's prefix, base and type 6 prunable), but nothing
+//     here picks a ring, computes a key image, builds a commitment or signs a
+//     CLSAG, and nothing broadcasts.
 //
 // The factory uses every module's PUBLIC signature only, so lanes editing
 // receive.js / blockScan.js internals do not touch this file.
@@ -49,6 +51,9 @@ import { moneroPocket, DEFAULT_NETWORK as DEFAULT_XMR_NETWORK } from './monero/p
 import { reportsFromScan } from './monero/watch.js';
 import { scanBlockFromNode } from './monero/scanFromNode.js';
 import { ownOutputsInBlock } from './monero/ownOutputs.js';
+import {
+  writeTransactionPrefix, writeRctBase, writeType6Prunable, writeTransaction,
+} from './monero/txWriter.js';
 import { createHandle, nextIndexFor } from './payHandle.js';
 import { nodeSourceFromEnv } from './monero/nodes.js';
 
@@ -366,6 +371,10 @@ export function createWallet({
       if (!supplied) throw new Error('ownOutputs needs the pockets to look for; use monero.scan for the store-derived ones.');
       return ownOutputsInBlock({ blockBytes, txBytesList, expectHash, trustViewTags, pockets: supplied });
     },
+    // The writing half of the format, reached from the wallet: a re-encode of
+    // what a read parsed, and a from-scratch framing of the sections a spend
+    // needs. Both are pure byte work: no keys, no node, no signing.
+    tx: { writeTransactionPrefix, writeRctBase, writeType6Prunable, writeTransaction },
   };
 
   return {
