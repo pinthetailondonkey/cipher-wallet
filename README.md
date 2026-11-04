@@ -54,8 +54,21 @@ recovery shards, and nothing here has been run against real money.
   secret and keys stay out. So the commitment check proves a decode is *a* valid
   opening, never *the* owner's. The line that unblocks a screen or a receipt is
   still an external one, and no watcher calls a Monero amount confirmed yet.
-- Lane C (recognizing the wallet's own outputs against a scan) is gated on a
-  countersigned work order. The rootVerify module is preparation only.
+- **Lane C is built: the wallet finds its own outputs in a scan, in the right
+  order.** `ownOutputsInBlock` proves the block, proves every transaction
+  against the block's own hash list and the tree root, and only then lets a
+  pocket see an output, because a scan over unproved bytes is a belief.
+  Membership and value stay separate: an owned output whose amount will not
+  decode is reported with its refusal, and a transaction that cannot be read
+  becomes its own row instead of throwing the block away. `state/AUDIT.md`
+  records the chain: built, audited, adjudicated, four adjudicator findings
+  fixed. The one witness the join lacked (no real fixture pays this wallet, so
+  the success branch had no test) is now a synthetic block whose amount must
+  come back through the whole path.
+- **`src/monero/rootVerify.js` is still unwired and is now redundant.** It was
+  built as preparation for Lane C, but `walkBlockTxs` already rebuilds the tree
+  root from proven ids and refuses on a mismatch, so nothing needs the separate
+  door. It is kept until someone decides whether to call it or delete it.
 
 ## Setup, once per checkout
 
@@ -287,6 +300,13 @@ were right the first time.
   published test vectors, not by review.
 - **Monero's hash-to-point map was wrong for half of all inputs**, while
   producing correct points for the other half. Published vectors caught it.
+- **The extra-field walker misread the merge-mining tag**, so a merge-mined
+  coinbase had an unreadable extra. The walker treated it as a fixed struct;
+  upstream serializes it as a length-prefixed string, and the fields inside are
+  the other way round from what the comment claimed. Nothing noticed until a
+  block scan ran the miner transaction, because every earlier test used a
+  non-miner transaction whose extra had no such tag. Writing a lane that had to
+  scan a whole block is what surfaced it.
 - **The vectors that would have caught it were cut away.** The fixture was made
   by taking the first N lines of each section, and Monero puts its refusal
   vectors at the ends, so all 48 vectors that say "this input must be refused"
