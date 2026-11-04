@@ -1215,3 +1215,32 @@ the first row refuse, asserts the second scan moved off it and read a block.
 Gate at HEAD: 736/736 tests, build 36, lint 0 errors (15 warnings).
 Residuals: two clearnet strangers (rows say so); a mid-scan death still refuses
 that scan by design; findings are returned, not persisted.
+
+## 2026-11-04 — the xmr finding stops being forgotten (lane A, coordinator)
+
+Base: 4af42b4. Commit 54ab50d. The entry point's own header said it: a Monero
+finding was "RETURNED, not written into the pocket store", because the store only
+accepts a signed watcher report and no bridge existed.
+
+FIX: `src/monero/watch.js` `reportsFromScan` turns a found output into the SAME
+report shape the Bitcoin rail uses (`{ source: 'watcher', txid, confirmations,
+amount }`), value formatted through `unitsToAmount` (piconero -> decimal xmr).
+`monero.scan({ record: true })` and `monero.recordFromScan` write them through the
+existing `pocketStore.record`, so the state walk and the "one pocket, one
+transaction" rule are reused, not re-implemented. A refused or valueless output is
+kept in the scan but not turned into a report. A store refusal is reported per
+row, not thrown, so one bad row cannot hide the rest.
+
+TWO LIMITS, stated in the module rather than hidden: the xmr rail tracks no
+per-pocket demand yet, so the found value is passed as the demand too (a real
+short-payment check is a later lane); and confirmations are only knowable when the
+caller gives both the block height and the tip's, so a finding is "seen" at one
+confirmation otherwise.
+
+TESTS: `test/monero-watch.test.mjs` 5/5 — conversion, refused-row skip,
+confirmation counting, a report moving a pocket to seen, a second txid refused and
+reported, and deep confirmations walking to confirmed.
+
+Gate at HEAD: 741/741 tests, build 37 modules, lint 0 errors (15 warnings).
+Residuals: no per-pocket xmr demand yet; a live block rarely pays the demo seed,
+so a recorded row is exercised by tests, not yet by a live hit.
