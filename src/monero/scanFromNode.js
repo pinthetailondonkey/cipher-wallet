@@ -12,9 +12,9 @@
 // height field, so one block's bytes cannot prove they are at height N — the
 // only link to N is the fetching node's `block_header.height`, which getBlock
 // already cross-checks. So a height scan is anchored by the node, and a block
-// scan is anchored by nothing but itself, unless the caller also passes the hash
-// they believe. That is a property of one block, not a defect, and it is why the
-// caller who wants an anchor should ask by hash. What a later range walk would
+// scan is anchored by nothing but itself, unless the caller passes `expectHash`
+// (or asks by hash, which is the same anchor for free). That is a property of one
+// block, not a defect, and it is why `anchored` exists in the result. What a later range walk would
 // add — linking each block to its parent, and so pinning a height by counting —
 // is not in this build.
 //
@@ -37,12 +37,29 @@ import { ownOutputsInBlock } from './ownOutputs.js';
 // Fetch one block and scan it for `pockets`.
 //
 // `hash` or `height`, exactly one, as nodeClient's own door requires.
+//
+// `expectHash` is the optional outside anchor for a HEIGHT request: the block id
+// the caller already believes belongs there. A height alone anchors nothing (see
+// the header), so a caller who knows which block they mean should pass it, or
+// ask by hash and get the same anchor for free. It is not accepted together with
+// `hash`: that would be two anchors and no rule for a disagreement, and `hash`
+// already is one.
 export async function scanBlockFromNode(node, {
-  hash, height, pockets, trustViewTags = true, ...options
+  hash, height, pockets, expectHash, trustViewTags = true, ...options
 } = {}) {
   if (!Array.isArray(pockets)) throw new Error('A node scan takes the pockets as a list.');
 
   const fetched = await getBlock(node, { hash, height }, options);
+
+  // The anchor, if there is one. An asked-for hash IS the anchor; otherwise the
+  // caller must supply one, or the scan is self-consistent only.
+  let anchor = fetched.askedByHash;
+  if (anchor === null && expectHash !== undefined) {
+    anchor = String(expectHash).trim().toLowerCase();
+    if (anchor !== '' && !/^[0-9a-f]{64}$/.test(anchor)) throw new Error('A block anchor is 64 hex characters.');
+    if (anchor === '') anchor = null;
+  }
+
   const blob = fetched.blob;
 
   // The transaction bytes. The list here is the DAEMON's claim about which
@@ -60,9 +77,7 @@ export async function scanBlockFromNode(node, {
     txBytesList,
     pockets,
     trustViewTags,
-    // A hash request has an external anchor: the id that was asked for. A height
-    // request has none, so no expectHash is passed and the result is labelled.
-    ...(fetched.askedByHash !== null ? { expectHash: fetched.askedByHash } : {}),
+    ...(anchor !== null ? { expectHash: anchor } : {}),
   });
 
   return {
@@ -71,7 +86,8 @@ export async function scanBlockFromNode(node, {
     askedByHash: fetched.askedByHash,
     askedByHeight: fetched.askedByHeight,
     nodeClaimedHeight: fetched.claimedHeight,
+    expectHash: anchor,
     // True only when the id was proved against something outside the block.
-    anchored: fetched.askedByHash !== null,
+    anchored: anchor !== null,
   };
 }

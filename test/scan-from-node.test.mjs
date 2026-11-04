@@ -9,8 +9,9 @@
 //   2. Believing the node's transaction hash list. The walk proves each id; a
 //      node that lists a tx it does not carry is refused at the fetch door, and
 //      a node that lists a hash whose bytes disagree is refused at the walk.
-//   3. Asking by height and trusting the height claim. The id is proven from the
-//      bytes; the recorded claim is not what the proof uses.
+//   3. Asking by height and believing that settles the height. One block's bytes
+//      cannot prove height (a Monero header carries none), so a height scan is
+//      UNANCHORED unless the caller passes expectHash. The result says so.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,9 +58,11 @@ function nodeStub({ blockHex = BLOCK_HEX, heightClaim = 3796965, hashClaim = BLO
       // A real node answers only what it carries: a hash it does not know goes to
       // missed_tx. That is what makes a wrong CLAIM visible as a refused read.
       const known = dropTx ? [] : asked.filter((h) => txIds.includes(h));
-      const txs = known.map((h) => ({ hash: h, as_hex: txHex[txIds.indexOf(h)] }));
+      const txs = known.map((h) => ({ tx_hash: h, as_hex: txHex[txIds.indexOf(h)] }));
       const missed = asked.filter((h) => !txIds.includes(h));
-      return { ok: true, status: 200, url, text: async () => JSON.stringify({ status: 'OK', txs, missed_tx: missed }) };
+      // A real daemon OMITS missed_tx entirely when nothing was missed.
+      const body2 = missed.length === 0 ? { status: 'OK', txs } : { status: 'OK', txs, missed_tx: missed };
+      return { ok: true, status: 200, url, text: async () => JSON.stringify(body2) };
     }
     throw new Error(`unexpected url ${url}`);
   };
@@ -87,7 +90,7 @@ test('a node answering with a DIFFERENT block is refused before any pocket sees 
   );
 });
 
-test('a height scan proves the id from the bytes, not from the height claim', async () => {
+test('a height scan is self-consistent only, and says so', async () => {
   const out = await scanBlockFromNode(NODE, {
     height: 3796965, pockets: [POCKET], fetchImpl: nodeStub(),
   });
@@ -173,12 +176,23 @@ test('a node whose block_header num_txes disagrees with its own json list is ref
   );
 });
 
-test('a height scan is labelled UNANCHORED, a hash scan is anchored', async () => {
+test('anchored is true only when an outside id anchors the proof', async () => {
   const byHeight = await scanBlockFromNode(NODE, { height: 3796965, pockets: [POCKET], fetchImpl: nodeStub() });
   assert.equal(byHeight.anchored, false, 'one block cannot prove its own height');
   const byHash = await scanBlockFromNode(NODE, { hash: BLOCK_ID, pockets: [POCKET], fetchImpl: nodeStub() });
   assert.equal(byHash.anchored, true, 'the asked-for hash is an outside anchor');
-  console.log('[scan-from-node] anchored: by hash yes, by height no');
+  // And expectHash gives a height request the same anchor explicitly.
+  const withAnchor = await scanBlockFromNode(NODE, {
+    height: 3796965, pockets: [POCKET], expectHash: BLOCK_ID, fetchImpl: nodeStub(),
+  });
+  assert.equal(withAnchor.anchored, true, 'the caller-supplied id is an outside anchor');
+  await assert.rejects(
+    scanBlockFromNode(NODE, {
+      height: 3796965, pockets: [POCKET], expectHash: '00'.repeat(32), fetchImpl: nodeStub(),
+    }),
+    /proves the id/,
+  );
+  console.log('[scan-from-node] anchored: by hash yes, by height only with expectHash');
 });
 
 test('a height scan ACCEPTS a different block if the node claims the height faithfully', () => {
