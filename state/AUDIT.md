@@ -726,3 +726,101 @@ tx id. A "different block" list passes only when its ids coincide. The miner tx 
 Open, none blocking: the join success branch is unwitnessed in-repo (correct, shown synthetically);
 `pocket.index` collisions make the decode's derivation ambiguous; a failed tx read loses the partial
 scanned count.
+
+## 2026-11-03 — d402141 (auditor) re-adjudicated, and 10d75b4 (its fixes) adjudicated
+
+Adjudicator: lane A. HEAD 10d75b4. Base for the fixes: d402141. Nothing below is read off either
+lane's prose; every attack was rebuilt from the fixture and live bytes, and the gate was re-run.
+
+    node --test test/  -> 660 tests / 660 pass / 0 fail (43.3s)
+    npm run build      -> build: 33 modules resolved
+    npm run lint       -> 0 errors, 15 warnings (101 files)
+
+    CIPHER_XMR_NODE=xmr-node.cakewallet.com:18081 node scripts/scan-live.mjs --height 3796965
+      block 1777215e7b0758dced972b7191c2f2d2…  scanned 34 transaction(s)  owned 0  ~5.1s
+
+### the auditor's B and D, re-run — **B VERIFIED, D VERIFIED**
+
+B rebuilt on c5ed375's own file (checked out to a scratch path and invoked directly): a height
+request 3796965, block mainnet-c's bytes served, the node claiming height 3796965. It RESOLVED: id
+fc39a116b90b56da, scanned 1, claimedHeight 3796965, no `anchored` flag. The double parse was real:
+c5ed375 imported parseBlock, called it, then ownOutputsInBlock parsed the SAME bytes a second time
+with expectHash = the first parse's id. parseBlock is deterministic, so the second proof cannot fail.
+The auditor's read holds.
+
+D rebuilt against `test/fixtures/monero-node-client-block-answer.json` and a fresh live get_block:
+real `json` is a STRING with no num_txes; num_txes (33) sits in `result.block_header`; a real
+get_transactions OMITS `missed_tx` when empty and carries `tx_hash`. c5ed375's stub put num_txes in
+json and always sent `missed_tx: []`, so readTxHashes' cross-check never ran. Auditor holds.
+
+### B, against 10d75b4 — **FIXED, one residual**
+
+- Tautology gone: `parseBlock` is no longer imported by scanFromNode (grep: comment only);
+  ownOutputsInBlock parses once. Confirmed by the height probe below resolving with no second proof.
+- `anchored` true only for a hash request: `fetched.askedByHash !== null`; getBlock returns
+  askedByHash null on a height ask. Reached true in a lie? A hash ask passes expectHash into
+  parseBlock, so anchored:true cannot ride a mismatched id: served C's bytes under asked A with a
+  faithful hash claim -> REFUSED "proves fc39a116…".
+- The pinned "accepts another block" test passes for the right reason: block mainnet-c (height
+  3795290) is served under height 3796965 with a faithful height claim and a txIds [] matching its
+  own zero-tx body; it asserts blockId == C's id and anchored false. Nothing else could accept it,
+  since a height is not recoverable from one header (parseBlockHeader has no height field).
+- RESIDUAL: the header says a height scan is unanchored "unless the caller also passes the hash they
+  believe". `...options` carries `expectHash` nowhere: `getBlock(node,{hash,height},options)`
+  destructures only {hash,height}, so a caller's expectHash is parsed away and never reaches
+  ownOutputsInBlock. Probe: height ask + options.expectHash = a DIFFERENT id -> RESOLVED, anchored
+  false (ignored); hash ask + options.expectHash = 00*32 -> RESOLVED (does not override). So the
+  clause is reachable only by asking by hash, never through the option.
+
+### D, against 10d75b4 — **FIXED where it mattered; the stub is still not the daemon's twice**
+
+- num_txes now in block_header: real shape met. A num_txes mismatch now REFUSES through readTxHashes
+  ("said the block holds 999") and has a test. Proof it runs: the OLD shape (num_txes in json, 999
+  over a 33 list) is silently ACCEPTED, the NEW shape refuses.
+- json is a string of tx_hashes, no num_txes: matches a real answer.
+- an unheld hash goes to missed_tx rather than an invented tx entry: matches.
+- STILL DIVERGENT: the stub always sends `missed_tx` (real OMITS the key when empty), and its tx
+  entry uses `hash` where a real daemon uses `tx_hash` (client ignores it). Because the stub also
+  drops unheld hashes from `txs`, the count check fires before the "does not carry" branch, so that
+  message is never the one a driver test exercises (the regex allows either).
+
+### E, against 10d75b4 — **the three named overclaims FIXED; one test comment left in the old voice**
+
+1. "cannot serve a different block than either one": replaced by the anchored/unanchored discussion.
+2. "getTransactions for the block's own hash list": the comment now says the list is the DAEMON's
+   claim and the body's list appears only in the walk.
+3. "the id is proven from the bytes first": the header now says a header has no height field and one
+   block cannot prove height N.
+Residual: test/scan-from-node.test.mjs's file header item 3 ("the id is proven from the bytes; the
+recorded claim is not what the proof uses") and the test title "a height scan proves the id from the
+bytes" still read as if the id were anchored; the src header corrects that, the test comment does not.
+
+### what neither lane checked (my probes)
+
+- empty pocket list against a live-shaped A answer: scanned 34, outputs 0, no throw.
+- trustViewTags false through the driver: scanned 34, no throw (the flag reaches ownOutputs).
+- daemon claim LONGER than the body (34 claimed vs 33 in the body): REFUSED "the block lists 33 …
+  34 were fetched".
+- getTransactions returning the asked txs in REVERSE order: REFUSED at the walk, index 0.
+- block_header absent entirely: getBlock's height check is skipped; height ask + a different block
+  still RESOLVED, anchored false — consistent with "unanchored".
+- hash+height both passed: REFUSED "not both and not neither", so the header's "also passes the
+  hash" cannot mean both params.
+
+### item 4 — is any scanned block's tx bytes never bound? **VERIFIED, no hole**
+
+The binding is `walkBlockTxs(block, txBytesList)`, called inside ownOutputsInBlock BEFORE any scanOne.
+It enforces count equality, then per index that `transactionIdOf(bytes[i]) === block.txHashes[i]`
+(from the block's OWN bytes), then rebuilds the tx tree root from block.minerTxId + those proven ids
+and compares it to block.txTreeRoot. block.id is itself proven against expectHash on a hash ask, and
+the miner bytes are inside blockBytes. So the only list a pocket ever sees proved equal to the block's
+own list at every index. `hashes.length === 0` with a non-empty body refuses at the walk (the fetch is
+skipped and nothing is scanned); the miner-only block walks as [] and scans only the miner. Swapped
+bytes, a permuted claim, a longer claim, and reversed fetched bytes all refuse. No unbound bytes.
+
+### verdicts, this section
+
+- d402141: B VERIFIED, D VERIFIED (re-derived).
+- 10d75b4: B FIXED (residual: options.expectHash ignored), D FIXED (residual: stub missed_tx always
+  present, hash vs tx_hash), E FIXED (residual: stale test-file comment). No new correctness defect;
+  gate 660/660, build 33, lint 0e 15w, live height scan reproduced.
