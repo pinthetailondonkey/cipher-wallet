@@ -1078,3 +1078,26 @@ its entries (the non-enumerable `work` does not leak).
   accepted; nothing accumulates work across competing tips and picks the heavier.
   A caller can now supply the floor by hand (a checkpoint's cumulative work), so
   this is a decision left to the founder rather than an unchecked inference.
+
+## 2026-11-04 — the last hole: fork choice is now a primitive (lane A, coordinator)
+
+Base: 4ef10db. Commit e6821db. The previous section left fork choice open: peers
+naming different tips were refused by exact `agreedTip` even when one chain was
+heavier.
+
+FIX (VERIFIED by re-execution): `src/fork.js` `heaviestTip` (heaviest by work,
+refusing an exact-work tie between distinct tips), `tipCandidates` (fetch each
+peer's tip, walk it back a bounded depth, price it, skip dead peers), and
+`chooseTip` (heaviest, strictly greater than the heaviest rival). `scanBack` gains
+`forkChoice` (off by default, so the pinned `agreedTip` path is unchanged).
+
+Own re-run: `npm test` 724/724, build 36 modules, lint 0 errors. `test/fork.test.mjs`
+12/12, including: a two-peer different-work fork is refused by default and CHOSEN
+under `forkChoice:true`; a same-tip pool still works; a tie is refused.
+
+### Verdict and what is left
+
+- fork choice: **VERIFIED** as a primitive and reachable via `forkChoice:true`.
+- Still a judgement, not forced: no caller is required onto it, and the winner's
+  height rides on the winning peer's own claim like every other height here. A
+  caller can pass a pinned `tipHash` to override both `agreedTip` and `chooseTip`.
