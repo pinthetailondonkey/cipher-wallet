@@ -1,0 +1,59 @@
+
+== 1. agreement anchoring / one peer answering both sides ==
+[A2 WITNESS] 1a same peer entry twice | agreed peers=2 | server-A hits=2
+[A2 PASS] 1a one physical peer listed twice satisfies "two peers"
+[A2 PASS] 1b two pool entries (one operator) are counted as two agreeing peers
+[A2 WITNESS] 1b one operator at two ports | agreed peers=2
+[A2 PASS] 1c a private, never-mined chain is walked and accepted from ONE peer
+[A2 WITNESS] 1c accepted tip header bits | eeeeeeee
+[A2 PASS] 1c one peer invents a payment (fabricated block body)
+[A2 WITNESS] 1c single-peer fabricated payments | 2 | amount=123456789
+
+== 2. checks run on the bytes that are believed ==
+[A2 PASS] 2 verifiedFilter fetches the block exactly once (no second copy)
+[A2 PASS] 2 the returned block is byte-identical to what was merkle-checked
+[A2 PASS] 2 returned block still hashes to the asked hash
+[A2 PASS] 2 a mutated body is refused
+[A2 WITNESS] 2 mutated-body refusal | That block's transactions produce merkle root dedcabcf95f305eaf8872bdf7288d0ba65805d1422cfa3381b5072e300366380, and its header names 4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b, so the body is not the body that header commits to.
+[A2 PASS] 2 a mutated header is refused
+[A2 WITNESS] 2 mutated-header refusal | That peer served block d2e2e59f3f7064b41da089d5922c1ca70e48ad6f3e73c4558a236f10a1db8561, not 000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943.
+
+== 3. a filter that omits our script under header-first ==
+[A2 PASS] 3 header-first LOSES the omitted payment
+[A2 PASS] 3 backwards walk FINDS it (reads every body)
+[A2 WITNESS] 3 omission | header-first payments=0 bodies=0 | backwards payments=1
+
+== 4. proof of work ==
+[A2 PASS] 4 a block with nBits=0 (impossible target) is accepted, body checked
+[A2 WITNESS] 4 nBits field | 00000000 | hash=03605db2a27d133e | no target compare
+[A2 PASS] 4 header-hash roundtrip still holds
+[A2 WITNESS] 4 private-chain cost | each block: 1 arbitrary 80-byte header + self merkle root; 0 leading zeros required
+
+== 5. height: trusted claim vs count ==
+[A2 PASS] 5 walkBack stamps heights from the tipHeight CLAIM (777)
+[A2 WITNESS] 5 counted height | block height=777 | from claim, not bytes
+[A2 PASS] 5 correct height is accepted
+[A2 PASS] 5 inflated height is refused (fail-closed)
+[A2 WITNESS] 5 inflated height | That peer did not answer in time.
+[A2 PASS] 5 deflated height is refused (fail-closed)
+[A2 WITNESS] 5 deflated height | That peer answered about block abababababababababababababababababababababababababababababababab, not 000000006c02c8ea6e4ff69651f7fcde348fb9d557a06e6957b65552002a7820.
+
+== 6. anchoring: first answer is the anchor, the rest is a veto ==
+[A2 PASS] 6a a first-answering liar is vetoed by the second (refusal, no false belief)
+[A2 WITNESS] 6a liar-first of two | The peers did not agree on this block's filter, so nothing was believed. Asked: first:1, second:2.
+[A2 PASS] 6b anchor on a liar discards an honest 2-3 majority (acknowledged refusal)
+[A2 WITNESS] 6b liar-first of three, majority honest | The peers did not agree on this block's filter, so nothing was believed. Asked: first:1, b:2, c:3.
+[A2 PASS] 6c two colluding peers (one asked first) can carry a false filter
+[A2 WITNESS] 6c liar-first + one colluder | aa
+
+== 7. the tip-hash door, the anchor, and anchorHeight ==
+[A2 PASS] 7a an anchor that is not a real block is still walked (anchor hash unverified)
+[A2 WITNESS] 7a fabricated anchor | anchor=ffffffff walked=1
+[A2 PASS] 7b two competing forks off the same anchor both pass every link and work-free check
+[A2 WITNESS] 7b forks | A=cd47005d B=be845899
+[A2 PASS] 7c a wrong anchorHeight renumbers every header with nothing to contradict it
+[A2 WITNESS] 7c anchorHeight believed | stamped height=800001
+[A2 PASS] 7d the lied height reaches the filter question unchanged
+[A2 WITNESS] 7d height -> getcfilters startHeight | 800001
+
+[A2] ALL CHECKS PASS
