@@ -1536,3 +1536,7 @@ Two real findings from this wait, both from source + live logs:
    upstream in m_input_cache. Actual acceptance criteria unchanged: keep
    syncing until is_synchronized flips true, then submit ONCE and read verify:
    DEBUG lines.
+
+06:00Z check: height 130,290 of 2.24M. Ten hours for 130k blocks (~360/h).
+The end is genuinely out of reach on this box tonight; the gap widens by ~4k
+blocks per day of new chain. Next scheduled look at noon.
