@@ -1543,3 +1543,15 @@ blocks per day of new chain. Next scheduled look at noon.
 
 12:00Z check: height 141,209. Effective rate held ~220/h overnight; ~92%
 of the chain still ahead. Next look tonight.
+
+13:55Z finding, and a correction to every prior "crawling" entry in this
+file: `get_info` on the prime node reports TWO heights. `height` is
+2244254 while `height_without_bootstrap` is 174487, because
+--bootstrap-daemon-address stagenet.xmr-tw.org:38081 is still active.
+monerod's bootstrap node serves full-chain get_info to RPC callers even
+though p2p sync has only reached 174k. The daemon is NOT judging txs
+locally yet (is_synchronized is bootstrap-relative); "Synced N/M"
+lines describe real local progress only. Prior height numbers were
+read correctly off prime.log but interpreted as the only truth.
+Local progress itself measured ~19k/h in one 5-minute window at 13:45Z,
+then bursts vary widely; hours more needed either way.
